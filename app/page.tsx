@@ -15,7 +15,16 @@ interface DiscoveredLandmark extends Landmark {
   location: string;
   description: string;
 }
-
+// Add this new interface
+interface PuzzleEncounter {
+  characterName: string;
+  characterPersona: string;
+  puzzleBeginning: string;
+  puzzleEnd: string;
+  secretTruth: string;
+  portraitUrl: string;
+  factionOwner: string;
+}
 /* ── Per-landmark personality ─────────────────────────────── */
 const META: Record<string, { color: string; label: string; Icon: () => JSX.Element }> = {
   colosseum_rome: {
@@ -371,9 +380,10 @@ function WeatherOverlay({ atmosphere }: { atmosphere: { weather: any; timezone: 
 export default function GameHUD() {
   const [gameState, setGameState] = useState<'menu'|'flying'|'loading'|'encounter'|'resolving'|'result'>('menu');
   const [activeTarget, setActiveTarget] = useState<Landmark | null>(null);
-  const [encounterData, setEncounterData] = useState<LandmarkEncounterResponse | null>(null);
+  const [encounterData, setEncounterData] = useState<PuzzleEncounter | null>(null);
   const [resultData, setResultData]   = useState<any>(null);
   const [pinColor,   setPinColor]     = useState<string | undefined>(undefined);
+  const [playerGuess, setPlayerGuess] = useState('');
   const [factionMap, setFactionMap]   = useState<Record<string,string>>(() => {
     if (typeof window === 'undefined') return {};
     try { return JSON.parse(localStorage.getItem('wl_factions') || '{}'); } catch { return {}; }
@@ -494,8 +504,8 @@ export default function GameHUD() {
 
   const handleMarkerClick = async (landmarkId: string, landmarkName: string) => {
     setGameState('loading');
+    setPlayerGuess(''); // Reset the input box for new encounters
     try {
-      // Check if this is a Gemini-discovered landmark and pass its custom context
       const discovered = discoveredLandmarks.find(d => d.id === landmarkId);
       const body: any = { landmarkId, landmarkName, playerState };
       if (discovered) {
@@ -514,17 +524,29 @@ export default function GameHUD() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok || !data.choices) throw new Error('failed');
-      setEncounterData(data); setGameState('encounter');
+      
+      // FIX: We now check for puzzleBeginning instead of choices!
+      if (!res.ok || !data.puzzleBeginning) throw new Error('failed');
+      
+      setEncounterData(data); 
+      setGameState('encounter');
     } catch { setGameState('menu'); }
   };
 
-  const handleMakeChoice = async (choiceText: string) => {
-    if (!activeTarget) return; setGameState('resolving');
+  const handleSubmitGuess = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeTarget || !encounterData || !playerGuess.trim()) return; 
+    setGameState('resolving');
+    
     try {
       const res = await fetch('/api/resolve', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ landmarkId: activeTarget.id, choiceId: choiceText, playerFaction: playerState.faction }),
+        body: JSON.stringify({ 
+          landmarkId: activeTarget.id, 
+          playerGuess: playerGuess.trim(),
+          secretTruth: encounterData.secretTruth, // We pass the secret truth to the AI judge
+          playerFaction: playerState.faction 
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error('failed');
@@ -946,33 +968,66 @@ export default function GameHUD() {
               </div>
             )}
 
-            {/* ENCOUNTER */}
+            {/* ENCOUNTER (Visual Novel Layout) */}
             {gameState === 'encounter' && encounterData && (
-              <div className="w-full max-w-2xl px-5">
-                <div className="rounded-2xl p-8 backdrop-blur-xl"
-                  style={{ background:'rgba(3,3,7,0.95)', border:'1px solid rgba(255,0,68,0.25)', boxShadow:'0 0 120px -20px rgba(255,0,68,0.28), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
-                    <p className="text-[9px] font-mono text-red-400/70 tracking-[0.3em] uppercase">Anomaly · {activeTarget?.name}</p>
+              <div className="absolute inset-x-0 bottom-0 p-8 flex justify-center pointer-events-auto">
+                <div className="w-full max-w-5xl flex items-end gap-6">
+                  
+                  {/* Character Portrait */}
+                  <div className="w-56 h-56 shrink-0 relative drop-shadow-2xl transform translate-y-2">
+                    <img 
+                      src={encounterData.portraitUrl} 
+                      alt={encounterData.characterName} 
+                      className="w-full h-full object-contain drop-shadow-[0_0_20px_rgba(0,229,255,0.4)]" 
+                    />
                   </div>
-                  <h2 className="text-2xl font-black uppercase tracking-wide text-white mb-4"
-                    style={{ fontFamily:'var(--font-cinzel)', textShadow:'0 0 40px rgba(255,0,68,0.5)' }}>
-                    {encounterData.title}
-                  </h2>
-                  <div className="h-px bg-red-500/15 mb-5"/>
-                  <p className="text-sm text-neutral-300 leading-relaxed mb-7">{encounterData.storyDescription}</p>
-                  <div className="space-y-2.5">
-                    {encounterData.choices.map((choice, idx) => (
-                      <button key={idx} onClick={() => handleMakeChoice(choice)}
-                        className="w-full text-left p-4 rounded-xl transition-all duration-150 group"
-                        style={{ background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)' }}
-                        onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(0,229,255,0.45)')}
-                        onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}>
-                        <span className="font-mono font-bold mr-3 text-xs text-cyan-500">[{String.fromCharCode(65+idx)}]</span>
-                        <span className="text-sm text-neutral-300 group-hover:text-white transition-colors">{choice}</span>
+
+                  {/* Dialogue & Input Box */}
+                  <div className="flex-1 rounded-2xl p-6 backdrop-blur-xl mb-4"
+                       style={{ background:'rgba(3,3,7,0.90)', border:'1px solid rgba(0,229,255,0.3)', boxShadow:'0 0 80px -20px rgba(0,229,255,0.2), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
+                    
+                    {/* Header */}
+                    <div className="flex items-end gap-3 mb-2">
+                      <span className="text-2xl font-black uppercase text-cyan-400 tracking-wider" style={{ fontFamily:'var(--font-cinzel)', textShadow:'0 0 20px rgba(0,229,255,0.5)' }}>
+                        {encounterData.characterName}
+                      </span>
+                      <span className="text-xs font-mono text-cyan-100 uppercase tracking-widest opacity-60 mb-1">
+                        [{encounterData.characterPersona}]
+                      </span>
+                    </div>
+                    
+                    <div className="h-px bg-gradient-to-r from-cyan-500/40 to-transparent mb-4"/>
+                    
+                    {/* The Puzzle Text */}
+                    <div className="mb-6 space-y-3">
+                      <p className="text-sm text-neutral-200 leading-relaxed">
+                        "{encounterData.puzzleBeginning}"
+                      </p>
+                      <p className="text-sm font-bold text-red-400 leading-relaxed">
+                        "{encounterData.puzzleEnd}"
+                      </p>
+                    </div>
+
+                    {/* Text Input Form */}
+                    <form onSubmit={handleSubmitGuess} className="flex gap-3 mt-auto">
+                      <input
+                        type="text"
+                        value={playerGuess}
+                        onChange={e => setPlayerGuess(e.target.value)}
+                        placeholder="Type your deduction of the Secret Truth..."
+                        className="flex-1 bg-black/60 border border-neutral-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-400 transition-colors"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!playerGuess.trim()}
+                        className="px-8 py-3 rounded-xl text-xs font-bold tracking-widest uppercase transition-all disabled:opacity-30"
+                        style={{ background:'rgba(0,229,255,0.1)', border:'1px solid rgba(0,229,255,0.3)', color:'#00E5FF' }}
+                      >
+                        Interrogate
                       </button>
-                    ))}
+                    </form>
                   </div>
+
                 </div>
               </div>
             )}
