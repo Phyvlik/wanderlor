@@ -1,4 +1,3 @@
-// app/api/chat/route.ts
 import { NextResponse } from 'next/server';
 import snowflake from 'snowflake-sdk';
 
@@ -13,7 +12,7 @@ const generateChatReply = (message: string, characterName: string, persona: stri
     connection.connect((err, conn) => {
       if (err) return reject(err);
 
-      const systemPrompt = `You are ${characterName}. Your persona is: ${persona}. 
+      const systemPrompt = `You are ${characterName}. Your persona is: ${persona}.
       You are talking to a time traveler. Keep your responses short (1-2 sentences), in character, and react to what they say. Do NOT use JSON. Just reply with plain dialogue.`;
 
       const messages = [
@@ -29,13 +28,11 @@ const generateChatReply = (message: string, characterName: string, persona: stri
 
       messages.push({ role: 'user', content: message });
 
-      // Create clean JSON without hacky string replacements
       const messagesJson = JSON.stringify(messages);
 
-      // Use Snowflake's $$ syntax to safely wrap the raw JSON string
       const sqlText = `
         SELECT SNOWFLAKE.CORTEX.COMPLETE(
-            'llama3-8b', 
+            'llama3-8b',
             PARSE_JSON($$${messagesJson}$$),
             {'temperature': 0.7}
         ) as AI_RESPONSE;
@@ -46,7 +43,7 @@ const generateChatReply = (message: string, characterName: string, persona: stri
         complete: (err, stmt, rows) => {
           if (err) return reject(err);
           if (!rows || rows.length === 0) return reject("No data");
-          
+
           try {
              let reply = rows[0].AI_RESPONSE;
              if (typeof reply !== 'string' && reply?.choices) {

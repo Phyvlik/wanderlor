@@ -1,4 +1,3 @@
-// app/api/encounter/route.ts
 import { NextResponse } from 'next/server';
 import snowflake from 'snowflake-sdk';
 import { getLandmarkOwner } from '../../utils/backboard';
@@ -150,7 +149,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // Use pre-fetched atmosphere if available, otherwise fetch live
     let localTime = 'Unknown Time';
     let weather = 'unstable';
     if (body.atmosphere?.localTime) {

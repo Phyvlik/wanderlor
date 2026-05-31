@@ -72,233 +72,6 @@ const META: Record<string, { color: string; label: string; Icon: () => JSX.Eleme
   },
 };
 
-/* ── (GlobeViz replaced by Globe3D — see components/Globe3D.tsx) ── */
-function _Unused({ factionMap, playerFaction }: { factionMap: Record<string, string>; playerFaction: string }) {
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const frameRef     = useRef<number>(0);
-  const angleRef     = useRef<number>(0);
-  const isDragging   = useRef(false);
-  const isHovering   = useRef(false);
-  const lastMouseX   = useRef(0);
-
-  // Pin base longitudes (degrees) — kept fixed relative to the rotating grid
-  const PINS_DEF = [
-    { id: 'colosseum_rome',     label: 'ROME',  lat:  41.9, lng:  12.5, color: '#FFB800' },
-    { id: 'eiffel_tower_paris', label: 'PARIS', lat:  48.9, lng:   2.3, color: '#00E5FF' },
-    { id: 'tokyo_tower_japan',  label: 'TOKYO', lat:  35.7, lng: 139.7, color: '#FF4040' },
-  ];
-
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext('2d')!;
-    const R = 230, cx = 260, cy = 260;
-
-    const project = (lat: number, lng: number, rotY: number) => {
-      const phi = lat * Math.PI / 180;
-      const lam = (lng + rotY) * Math.PI / 180;
-      const x3 = Math.cos(phi) * Math.sin(lam);
-      const y3 = Math.sin(phi);
-      const z3 = Math.cos(phi) * Math.cos(lam);
-      return { x: cx + R * x3, y: cy - R * y3, visible: z3 > 0 };
-    };
-
-    const draw = () => {
-      canvas.width = canvas.offsetWidth * window.devicePixelRatio;
-      canvas.height = canvas.offsetHeight * window.devicePixelRatio;
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-      const W = canvas.offsetWidth, H = canvas.offsetHeight;
-      const r = Math.min(W, H) / 2 - 10;
-      const ox = W / 2, oy = H / 2;
-
-      ctx.clearRect(0, 0, W, H);
-
-      // Clipping circle
-      ctx.save();
-      ctx.beginPath(); ctx.arc(ox, oy, r, 0, Math.PI * 2); ctx.clip();
-
-      // Base gradient
-      const bg = ctx.createRadialGradient(ox - r*0.25, oy - r*0.25, 0, ox, oy, r);
-      bg.addColorStop(0,   '#1a4a7a');
-      bg.addColorStop(0.5, '#0d2d50');
-      bg.addColorStop(1,   '#060f1e');
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-      // Atmosphere inner tint
-      const atm = ctx.createRadialGradient(ox, oy, r * 0.6, ox, oy, r);
-      atm.addColorStop(0, 'rgba(0,180,255,0)');
-      atm.addColorStop(1, 'rgba(0,180,255,0.12)');
-      ctx.fillStyle = atm; ctx.fillRect(0, 0, W, H);
-
-      const rot = angleRef.current;
-
-      // Latitude lines
-      for (let lat = -75; lat <= 75; lat += 15) {
-        const phi = lat * Math.PI / 180;
-        const ry = r * Math.cos(phi);
-        const yLine = oy - r * Math.sin(phi);
-        ctx.beginPath();
-        ctx.ellipse(ox, yLine, ry, ry * 0.15, 0, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(0,220,255,0.18)';
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
-      }
-
-      // Longitude lines (only front hemisphere visible as ellipses)
-      for (let lng = 0; lng < 360; lng += 20) {
-        const lam = (lng + rot) * Math.PI / 180;
-        const rx = r * Math.abs(Math.sin(lam));
-        const skew = Math.cos(lam);
-        ctx.beginPath();
-        ctx.ellipse(ox, oy, rx, r, 0, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(0,220,255,${Math.abs(skew) > 0.5 ? 0.14 : 0.07})`;
-        ctx.lineWidth = 0.7;
-        ctx.stroke();
-      }
-
-      // Specular highlight
-      const spec = ctx.createRadialGradient(ox - r*0.3, oy - r*0.3, 0, ox - r*0.3, oy - r*0.3, r*0.5);
-      spec.addColorStop(0, 'rgba(255,255,255,0.08)');
-      spec.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = spec; ctx.fillRect(0, 0, W, H);
-
-      ctx.restore();
-
-      // Outline + rim glow
-      const rim = ctx.createRadialGradient(ox, oy, r * 0.75, ox, oy, r + 2);
-      rim.addColorStop(0, 'rgba(0,229,255,0)');
-      rim.addColorStop(1, 'rgba(0,229,255,0.35)');
-      ctx.beginPath(); ctx.arc(ox, oy, r, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(0,229,255,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
-
-      // Pins
-      const scaleFactor = r / 230;
-      for (const p of PINS_DEF) {
-        const owner = factionMap[p.id];
-        const captured = owner && owner !== 'Unclaimed';
-        const pinColor = captured ? (owner === playerFaction ? '#00E5FF' : '#FF4040') : p.color;
-
-        const proj = (() => {
-          const phi = p.lat * Math.PI / 180;
-          const lam = (p.lng + rot) * Math.PI / 180;
-          const x3 = Math.cos(phi) * Math.sin(lam);
-          const y3 = Math.sin(phi);
-          const z3 = Math.cos(phi) * Math.cos(lam);
-          return { x: ox + r * x3, y: oy - r * y3, visible: z3 > -0.1 };
-        })();
-
-        if (!proj.visible) continue;
-
-        // Pulse ring
-        const t = (Date.now() / 1200 + PINS_DEF.indexOf(p) * 0.4) % 1;
-        ctx.beginPath();
-        ctx.arc(proj.x, proj.y, (8 + t * 14) * scaleFactor, 0, Math.PI * 2);
-        ctx.strokeStyle = pinColor + Math.round((1 - t) * 100).toString(16).padStart(2,'0');
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Dot
-        ctx.beginPath();
-        ctx.arc(proj.x, proj.y, 5 * scaleFactor, 0, Math.PI * 2);
-        ctx.fillStyle = pinColor;
-        ctx.shadowColor = pinColor;
-        ctx.shadowBlur = 12;
-        ctx.fill();
-        ctx.shadowBlur = 0;
-
-        // Label
-        ctx.font = `bold ${9 * scaleFactor}px monospace`;
-        ctx.fillStyle = pinColor;
-        ctx.globalAlpha = 0.9;
-        const lx = proj.x + (proj.x > ox ? -10 : 10) * scaleFactor;
-        ctx.textAlign = proj.x > ox ? 'right' : 'left';
-        ctx.fillText(p.label, lx, proj.y - 9 * scaleFactor);
-        if (captured) {
-          ctx.font = `${7.5 * scaleFactor}px monospace`;
-          ctx.globalAlpha = 0.65;
-          ctx.fillText(owner === playerFaction ? '▲ YOURS' : '▼ ENEMY', lx, proj.y + 2 * scaleFactor);
-        }
-        ctx.globalAlpha = 1;
-      }
-
-      // Scan sweep
-      const sweepAngle = (Date.now() / 8000) * Math.PI * 2;
-      ctx.save();
-      ctx.beginPath(); ctx.arc(ox, oy, r, 0, Math.PI * 2); ctx.clip();
-      const sweep = ctx.createLinearGradient(
-        ox + Math.cos(sweepAngle - 0.4) * r,
-        oy + Math.sin(sweepAngle - 0.4) * r,
-        ox + Math.cos(sweepAngle) * r,
-        oy + Math.sin(sweepAngle) * r,
-      );
-      sweep.addColorStop(0, 'rgba(0,229,255,0)');
-      sweep.addColorStop(1, 'rgba(0,229,255,0.07)');
-      ctx.beginPath();
-      ctx.moveTo(ox, oy);
-      ctx.arc(ox, oy, r, sweepAngle - 0.4, sweepAngle);
-      ctx.closePath();
-      ctx.fillStyle = sweep;
-      ctx.fill();
-      ctx.restore();
-
-      // Auto-rotate: full speed when idle, slow when hovered, paused while dragging
-      if (!isDragging.current) {
-        angleRef.current += isHovering.current ? 0.012 : 0.055;
-      }
-      frameRef.current = requestAnimationFrame(draw);
-    };
-
-    // Mouse interaction
-    const onMouseEnter = () => {
-      isHovering.current = true;
-      canvas.style.cursor = 'grab';
-    };
-    const onMouseLeave = () => {
-      isHovering.current = false;
-      isDragging.current = false;
-      canvas.style.cursor = 'default';
-    };
-    const onMouseDown = (e: MouseEvent) => {
-      isDragging.current = true;
-      lastMouseX.current = e.clientX;
-      canvas.style.cursor = 'grabbing';
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const dx = e.clientX - lastMouseX.current;
-      angleRef.current += dx * 0.25;
-      lastMouseX.current = e.clientX;
-    };
-    const onMouseUp = () => {
-      isDragging.current = false;
-      canvas.style.cursor = isHovering.current ? 'grab' : 'default';
-    };
-
-    canvas.addEventListener('mouseenter', onMouseEnter);
-    canvas.addEventListener('mouseleave', onMouseLeave);
-    canvas.addEventListener('mousedown',  onMouseDown);
-    canvas.addEventListener('mousemove',  onMouseMove);
-    canvas.addEventListener('mouseup',    onMouseUp);
-
-    draw();
-    return () => {
-      cancelAnimationFrame(frameRef.current);
-      canvas.removeEventListener('mouseenter', onMouseEnter);
-      canvas.removeEventListener('mouseleave', onMouseLeave);
-      canvas.removeEventListener('mousedown',  onMouseDown);
-      canvas.removeEventListener('mousemove',  onMouseMove);
-      canvas.removeEventListener('mouseup',    onMouseUp);
-    };
-  }, [factionMap, playerFaction]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="w-full h-full"
-      style={{ filter: 'drop-shadow(0 0 50px rgba(0,180,255,0.25))' }}
-    />
-  );
-}
-
 /* ── Main component ─────────────────────────────────────── */
 /* ── Weather visual overlay ──────────────────────────────── */
 function WeatherOverlay({ atmosphere }: { atmosphere: { weather: any; timezone: any } | null }) {
@@ -411,16 +184,21 @@ export default function GameHUD() {
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
-    const stars = Array.from({ length: 260 }, () => ({
-      x: Math.random(), y: Math.random(),
-      r: Math.random() * 1.3 + 0.15, o: Math.random() * 0.5 + 0.08,
-    }));
+    const stars = Array.from({ length: 420 }, () => {
+      const size = Math.random();
+      return {
+        x: Math.random(), y: Math.random(),
+        r: size < 0.7 ? Math.random() * 0.8 + 0.2 : Math.random() * 1.6 + 0.8,
+        o: size < 0.7 ? Math.random() * 0.5 + 0.25 : Math.random() * 0.4 + 0.55,
+        color: Math.random() < 0.12 ? `rgba(180,220,255,` : Math.random() < 0.08 ? `rgba(255,220,180,` : `rgba(255,255,255,`,
+      };
+    });
     const draw = () => {
       canvas.width = window.innerWidth; canvas.height = window.innerHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       stars.forEach(s => {
         ctx.beginPath(); ctx.arc(s.x * canvas.width, s.y * canvas.height, s.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,255,${s.o})`; ctx.fill();
+        ctx.fillStyle = `${s.color}${s.o})`; ctx.fill();
       });
     };
     draw();
@@ -749,6 +527,17 @@ export default function GameHUD() {
   };
 
   const activeMeta = activeTarget ? META[activeTarget.id] : null;
+  const activeDiscovered = activeTarget ? discoveredLandmarks.find(d => d.id === activeTarget.id) : null;
+  const activeDisplay = activeMeta ?? (activeDiscovered ? {
+    color: activeDiscovered.geminiColor,
+    label: activeDiscovered.era,
+    Icon: () => (
+      <svg viewBox="0 0 20 28" fill="none" className="w-5 h-7">
+        <path d="M10 0C4.48 0 0 4.48 0 10c0 7.5 10 18 10 18S20 17.5 20 10C20 4.48 15.52 0 10 0z" fill="currentColor" opacity=".35" stroke="currentColor" strokeWidth="1.2"/>
+        <circle cx="10" cy="10" r="3.5" fill="currentColor"/>
+      </svg>
+    ),
+  } : null);
 
   // For Gemini-discovered landmarks, derive theme from geminiColor
   const getDiscoveredTheme = (color: string) => ({
@@ -758,14 +547,14 @@ export default function GameHUD() {
   });
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden text-white" style={{ background: '#000' }}>
+    <main className="relative w-screen h-screen overflow-hidden text-white" style={{ background: '#040d1e' }}>
 
       {/* Starfield */}
       <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none"/>
 
       {/* Deep space atmosphere */}
       <div className="absolute inset-0 pointer-events-none" style={{
-        background: 'radial-gradient(ellipse at 30% 50%, rgba(2,10,28,0.88) 0%, rgba(0,0,0,0.95) 60%), radial-gradient(ellipse at 90% 10%, rgba(0,60,110,0.2) 0%, transparent 50%), radial-gradient(ellipse at 10% 90%, rgba(60,0,90,0.15) 0%, transparent 45%)',
+        background: 'radial-gradient(ellipse at 30% 50%, rgba(2,10,28,0.55) 0%, rgba(4,8,22,0.7) 60%), radial-gradient(ellipse at 90% 10%, rgba(0,80,140,0.18) 0%, transparent 50%), radial-gradient(ellipse at 10% 90%, rgba(80,0,110,0.14) 0%, transparent 45%)',
       }}/>
 
       {/* Map (flying state) */}
@@ -909,32 +698,34 @@ export default function GameHUD() {
             {/* ── Discovered landmarks ── */}
             {discoveredLandmarks.length > 0 && (
               <div ref={discoveredRef} className="flex flex-col gap-1 mt-3 mb-2">
-                <p className="text-xs font-mono text-neutral-400 tracking-[0.3em] uppercase mb-2 flex items-center gap-2">
-                  <span>Discovered</span>
-                  <span className="px-1.5 py-0.5 rounded text-[8px]" style={{ background: 'rgba(0,229,255,0.08)', color: '#00E5FF', border: '1px solid rgba(0,229,255,0.2)' }}>
-                    {discoveredLandmarks.length} NEW
-                  </span>
-                </p>
-                {discoveredLandmarks.map((m, i) => {
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-xs font-mono text-neutral-400 tracking-[0.3em] uppercase flex items-center gap-2">
+                    <span>Discovered</span>
+                    <span className="px-1.5 py-0.5 rounded text-[8px]" style={{ background: 'rgba(0,229,255,0.08)', color: '#00E5FF', border: '1px solid rgba(0,229,255,0.2)' }}>
+                      {discoveredLandmarks.length} NEW
+                    </span>
+                  </p>
+                  <button
+                    onClick={() => { setDiscoveredLandmarks([]); setNftMinting(new Set()); setNftResults({}); try { localStorage.removeItem('wl_discovered'); } catch {} }}
+                    className="ml-auto text-[9px] font-mono tracking-wider uppercase px-2 py-0.5 rounded transition-all hover:opacity-100 opacity-40"
+                    style={{ color: '#ff6b6b', border: '1px solid rgba(255,107,107,0.3)' }}
+                  >
+                    Clear All
+                  </button>
+                </div>
+                {discoveredLandmarks.map((m) => {
                   const t = getDiscoveredTheme(m.geminiColor);
                   const owner = factionMap[m.id];
                   const captured = owner && owner !== 'Unclaimed';
                   const mine = captured && owner === playerState.faction;
                   return (
-                    <button
-                      key={m.id}
-                      onClick={() => handleSelectMission(m)}
-                      className="discovered-card w-full text-left rounded-xl overflow-hidden transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                      style={{ background: 'rgba(6,6,12,0.95)', border: `1px solid ${t.border}`, boxShadow: `0 0 24px -8px ${t.glow}` }}
-                    >
+                    <div key={m.id} className="discovered-card rounded-xl overflow-hidden" style={{ background: 'rgba(6,6,12,0.95)', border: `1px solid ${t.border}`, boxShadow: `0 0 24px -8px ${t.glow}` }}>
                       <div className="h-px w-full" style={{ background: `linear-gradient(to right, ${t.accent}, transparent)` }}/>
                       <div className="px-4 py-3 flex items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5">
+                        <button onClick={() => handleSelectMission(m)} className="flex-1 min-w-0 text-left">
+                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                             <p className="font-bold text-sm text-white truncate">{m.name}</p>
-                            <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ color: t.accent, background: t.glow, border: `1px solid ${t.border}` }}>
-                              GEMINI
-                            </span>
+                            <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ color: t.accent, background: t.glow, border: `1px solid ${t.border}` }}>GEMINI</span>
                             {nftMinting.has(m.id) && (
                               <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1" style={{ color: '#9945FF', background: 'rgba(153,69,255,0.08)', border: '1px solid rgba(153,69,255,0.3)' }}>
                                 <span className="w-2 h-2 rounded-full border border-t-purple-400 border-purple-500/20 animate-spin inline-block"/>
@@ -951,26 +742,24 @@ export default function GameHUD() {
                               </a>
                             )}
                             {captured && (
-                              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0" style={mine
-                                ? { color: '#00E5FF', background: 'rgba(0,229,255,0.08)', border: '1px solid rgba(0,229,255,0.3)' }
-                                : { color: '#FF4040', background: 'rgba(255,64,64,0.08)', border: '1px solid rgba(255,64,64,0.3)' }}>
+                              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0" style={mine ? { color: '#00E5FF', background: 'rgba(0,229,255,0.08)', border: '1px solid rgba(0,229,255,0.3)' } : { color: '#FF4040', background: 'rgba(255,64,64,0.08)', border: '1px solid rgba(255,64,64,0.3)' }}>
                                 {mine ? '▲ YOURS' : '▼ ENEMY'}
                               </span>
                             )}
                           </div>
                           <p className="text-xs font-mono mb-0.5" style={{ color: t.accent, opacity: 0.85 }}>{m.era}</p>
                           <p className="text-xs text-neutral-400 truncate">{(m as DiscoveredLandmark).location}</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-1.5 shrink-0">
-                          <div className="flex gap-0.5">
-                            {[1,2,3,4,5].map(d => (
-                              <div key={d} className="w-1 h-1 rounded-full" style={{ background: d <= m.baseDifficulty ? t.accent : 'rgba(255,255,255,0.08)' }}/>
-                            ))}
-                          </div>
-                          <span className="text-xs font-mono text-neutral-400 tracking-wider">DEPLOY →</span>
+                        </button>
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <button
+                            onClick={() => setDiscoveredLandmarks(prev => prev.filter(d => d.id !== m.id))}
+                            className="text-[10px] w-5 h-5 rounded flex items-center justify-center transition-opacity opacity-30 hover:opacity-100"
+                            style={{ color: '#ff6b6b', border: '1px solid rgba(255,107,107,0.3)' }}
+                          >x</button>
+                          <span className="text-xs font-mono text-neutral-400 tracking-wider">DEPLOY</span>
                         </div>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -978,9 +767,23 @@ export default function GameHUD() {
             </div>{/* end scrollable */}
 
             {/* ── Footer ── */}
-            <div className="shrink-0 flex items-center gap-3 opacity-30 pt-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" style={{ animation: 'flicker 2s ease-in-out infinite' }}/>
-              <p className="text-[9px] font-mono tracking-widest uppercase">WanderLore · Temporal Ops v1.0</p>
+            <div className="shrink-0 pt-3 flex flex-col gap-2">
+              <div className="flex items-center gap-3 opacity-30">
+                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" style={{ animation: 'flicker 2s ease-in-out infinite' }}/>
+                <p className="text-[9px] font-mono tracking-widest uppercase">WanderLore · Temporal Ops v1.0</p>
+              </div>
+              {/* DigitalOcean badge */}
+              <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg w-fit"
+                style={{ background: 'rgba(0,117,255,0.07)', border: '1px solid rgba(0,117,255,0.2)' }}>
+                {/* DigitalOcean logo mark */}
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" fill="#0075FF" opacity=".15"/>
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c5.52 0 10-4.48 10-10S17.52 2 12 2zm0 16.5v-3c-2.49 0-4.5-2.01-4.5-4.5H4c0 4.42 3.58 8 8 8zm0-6v-3c-.83 0-1.5-.67-1.5-1.5H7.5c0 2.49 2.01 4.5 4.5 4.5zm0-6V4c-3.31 0-6 2.69-6 6h2.5c0-1.93 1.57-3.5 3.5-3.5z" fill="#0075FF" opacity=".9"/>
+                </svg>
+                <p className="text-[9px] font-mono tracking-wider" style={{ color: 'rgba(0,117,255,0.8)' }}>
+                  Deployed on <span style={{ color: '#0075FF', fontWeight: 700 }}>DigitalOcean</span>
+                </p>
+              </div>
             </div>
           </div>
 
@@ -1026,6 +829,16 @@ export default function GameHUD() {
           {/* Top bar */}
           <header className="pointer-events-auto flex justify-between items-center px-7 pt-5 gap-4">
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setGameState('menu'); setActiveTarget(null); setPinColor(undefined); setEncounterData(null); setChatLog([]); }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-mono tracking-wider uppercase transition-all hover:scale-105 active:scale-95"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.55)' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(0,229,255,0.35)'; e.currentTarget.style.color = '#00E5FF'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; }}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M6 1L2 5l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                Base
+              </button>
               <div className="w-7 h-7 rounded border border-cyan-500/30 bg-cyan-500/8 flex items-center justify-center">
                 <div className="w-2 h-2 rounded-full bg-cyan-400" style={{ animation: 'flicker 2.4s ease-in-out infinite' }}/>
               </div>
@@ -1036,7 +849,7 @@ export default function GameHUD() {
             </div>
             <div className="flex items-center gap-3 ml-auto">
               <WalletConnect onConnect={setWalletAddress} onDisconnect={() => setWalletAddress('')} />
-            {activeMeta && (
+            {activeDisplay && (
               <div className="flex items-center gap-3">
                 {/* Weather badge — always visible in flying state */}
                 {gameState === 'flying' && (
@@ -1061,10 +874,10 @@ export default function GameHUD() {
                   </div>
                 )}
                 <div className="flex items-center gap-2 opacity-80">
-                  <div style={{ color: activeMeta.color }}><activeMeta.Icon/></div>
+                  <div style={{ color: activeDisplay.color }}><activeDisplay.Icon/></div>
                   <div className="text-right">
                     <p className="text-xs font-bold">{activeTarget?.name}</p>
-                    <p className="text-[9px] font-mono" style={{ color: activeMeta.color, opacity: 0.7 }}>{activeMeta.label}</p>
+                    <p className="text-[9px] font-mono" style={{ color: activeDisplay.color, opacity: 0.7 }}>{activeDisplay.label}</p>
                   </div>
                 </div>
               </div>
@@ -1089,7 +902,7 @@ export default function GameHUD() {
                     <div className="flex items-center justify-between w-full gap-4">
                       <div className="flex items-center gap-2">
                         <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
-                        <p className="text-xs font-bold tracking-widest uppercase" style={{ color: activeMeta?.color }}>
+                        <p className="text-xs font-bold tracking-widest uppercase" style={{ color: activeDisplay?.color }}>
                           {activeTarget.name}
                         </p>
                       </div>

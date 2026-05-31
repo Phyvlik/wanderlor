@@ -277,9 +277,11 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
 
     // For Gemini landmarks, elevation is the true ground level.
     // For static presets (no elevation), treat height as ground reference.
-    const groundElev = target.elevation != null ? target.elevation : target.height - 60;
-    const entityAlt  = groundElev + 20;   // marker sits ~20m above terrain
-    const cameraAlt  = groundElev + 150;  // 150m above terrain — safe above uneven ground
+    const groundElev = target.elevation != null ? target.elevation : 35;
+    const entityAlt  = groundElev + 60;   // marker visible above surrounding buildings
+    // View altitude: high enough to see above any landmark (Eiffel=324m, so 500m clears it)
+    const viewAlt    = groundElev + 520;
+    const initAlt    = groundElev + 1800; // start high for dramatic drop-in
 
     viewer.entities.add({
       id: target.id,
@@ -296,13 +298,13 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
 
     setTilesReady(false);
 
-    // Start further back at same altitude band so tiles for the approach are preloaded
+    // Start directly above, looking almost straight down — tiles for the landmark area preload
     viewer.camera.setView({
-      destination: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat - 0.01, cameraAlt * 2.2),
-      orientation: { heading: 0, pitch: window.Cesium.Math.toRadians(-35), roll: 0 },
+      destination: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat, initAlt),
+      orientation: { heading: 0, pitch: window.Cesium.Math.toRadians(-80), roll: 0 },
     });
 
-    // Wait for tiles to actually appear (count rendered frames), then pull back + fly in
+    // Wait for tiles to actually appear (count rendered frames), then fly in dramatically
     let frameCount = 0;
     let cinematicStarted = false;
 
@@ -318,18 +320,20 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
           (ts.statistics?.numberOfTilesWithContentReady ?? 0) > 0
         : frameCount > 150;
 
-      if (!pendingDone || frameCount < 60) return;
+      // 120 frame minimum (~2s) so the "SYNCING TIMELINE" overlay is always visible
+      if (!pendingDone || frameCount < 120) return;
 
       cinematicStarted = true;
       removePostRender();
       clearTimeout(fallback);
       setTilesReady(true);
 
-      // Dramatic sweep from current (far/high) into the landmark
+      // Swoop from above down to a position south of the landmark, looking at it at ~42°
+      // This puts the full landmark in frame regardless of its height
       viewer.camera.flyTo({
-        destination: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat - 0.003, cameraAlt * 0.75),
-        orientation: { heading: 0, pitch: window.Cesium.Math.toRadians(-12), roll: 0 },
-        duration: 4,
+        destination: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat - 0.004, viewAlt),
+        orientation: { heading: 0, pitch: window.Cesium.Math.toRadians(-42), roll: 0 },
+        duration: 4.5,
         easingFunction: window.Cesium.EasingFunction.CUBIC_IN_OUT,
       });
     });
