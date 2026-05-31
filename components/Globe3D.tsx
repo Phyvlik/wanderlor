@@ -88,14 +88,14 @@ export default function Globe3D({
     ctrl.autoRotateSpeed = 3.5;
     ctrl.enableZoom      = false;
     ctrl.enablePan       = false;
-    globeRef.current.pointOfView({ altitude: 1.7 });
+    globeRef.current.pointOfView({ altitude: 2.1 }); 
   };
 
   useEffect(() => { setupGlobe(); }, [ready]);
 
   /* Which countries are captured and by whom */
   const capturedCountries = useMemo(() => {
-    const map: Record<string, string> = {}; // country name → faction
+    const map: Record<string, string> = {}; 
     Object.entries(factionMap).forEach(([id, faction]) => {
       if (!faction || faction === 'Unclaimed') return;
       // Static landmarks
@@ -178,8 +178,8 @@ export default function Globe3D({
       onMouseLeave={() => globeRef.current?.controls() && (globeRef.current.controls().autoRotateSpeed = 3.5)}
       style={{
         filter: hasCaptured
-          ? 'drop-shadow(0 0 40px rgba(255,190,40,0.2)) drop-shadow(0 0 80px rgba(0,100,255,0.15))'
-          : 'drop-shadow(0 0 40px rgba(0,100,255,0.2))',
+          ? 'drop-shadow(0 0 60px rgba(255,190,40,0.4)) drop-shadow(0 0 100px rgba(0,180,255,0.3))'
+          : 'drop-shadow(0 0 60px rgba(0,229,255,0.35))',
         transition: 'filter 1s ease',
       }}
     >
@@ -198,8 +198,8 @@ export default function Globe3D({
           backgroundColor="rgba(0,0,0,0)"
           backgroundImageUrl={null}
           showAtmosphere
-          atmosphereColor="rgba(30,160,255,0.9)"
-          atmosphereAltitude={0.22}
+          atmosphereColor="#00E5FF"
+          atmosphereAltitude={0.2}
 
           /* ── Country polygons ── */
           polygonsData={countries.features}

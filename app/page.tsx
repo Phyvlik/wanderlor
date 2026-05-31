@@ -17,7 +17,7 @@ interface DiscoveredLandmark extends Landmark {
   description: string;
   elevation: number;
 }
-// Add this new interface
+
 interface PuzzleEncounter {
   characterName: string;
   characterPersona: string;
@@ -27,7 +27,7 @@ interface PuzzleEncounter {
   portraitUrl: string;
   factionOwner: string;
 }
-/* ── Per-landmark personality ─────────────────────────────── */
+/* Per-landmark personality */
 const META: Record<string, { color: string; label: string; Icon: () => JSX.Element }> = {
   colosseum_rome: {
     color: '#FFB800',
@@ -72,8 +72,8 @@ const META: Record<string, { color: string; label: string; Icon: () => JSX.Eleme
   },
 };
 
-/* ── Main component ─────────────────────────────────────── */
-/* ── Weather visual overlay ──────────────────────────────── */
+/* ── Main component */
+/* ── Weather visual overlay */
 function WeatherOverlay({ atmosphere }: { atmosphere: { weather: any; timezone: any } | null }) {
   const particles = useMemo(() => Array.from({ length: 80 }, (_, i) => ({
     id: i,
@@ -184,13 +184,13 @@ export default function GameHUD() {
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
-    const stars = Array.from({ length: 420 }, () => {
+    const stars = Array.from({ length: 650 }, () => { // Increased from 420
       const size = Math.random();
       return {
         x: Math.random(), y: Math.random(),
-        r: size < 0.7 ? Math.random() * 0.8 + 0.2 : Math.random() * 1.6 + 0.8,
-        o: size < 0.7 ? Math.random() * 0.5 + 0.25 : Math.random() * 0.4 + 0.55,
-        color: Math.random() < 0.12 ? `rgba(180,220,255,` : Math.random() < 0.08 ? `rgba(255,220,180,` : `rgba(255,255,255,`,
+        r: size < 0.7 ? Math.random() * 1.2 + 0.4 : Math.random() * 2.0 + 1.0,
+        o: size < 0.7 ? Math.random() * 0.6 + 0.4 : Math.random() * 0.5 + 0.6,
+        color: Math.random() < 0.15 ? `rgba(180,240,255,` : Math.random() < 0.1 ? `rgba(255,200,255,` : `rgba(255,255,255,`,
       };
     });
     const draw = () => {
@@ -301,7 +301,7 @@ export default function GameHUD() {
 
   const handleMarkerClick = async (landmarkId: string, landmarkName: string) => {
     setGameState('loading');
-    setPlayerGuess(''); // Reset the input box for new encounters
+    setPlayerGuess('');
     try {
       const discovered = discoveredLandmarks.find(d => d.id === landmarkId);
       const body: any = { landmarkId, landmarkName, playerState };
@@ -324,7 +324,6 @@ export default function GameHUD() {
       });
       const data = await res.json();
 
-      // FIX: We now check for puzzleBeginning instead of choices!
       if (!res.ok || !data.puzzleBeginning) throw new Error('failed');
       const humanFallback = `https://api.dicebear.com/7.x/personas/svg?seed=${encodeURIComponent(data.characterName || 'agent')}`;
       setEncounterData({ ...data, portraitUrl: humanFallback });
@@ -539,7 +538,6 @@ export default function GameHUD() {
     ),
   } : null);
 
-  // For Gemini-discovered landmarks, derive theme from geminiColor
   const getDiscoveredTheme = (color: string) => ({
     accent: color,
     glow: color + '28',
@@ -554,7 +552,7 @@ export default function GameHUD() {
 
       {/* Deep space atmosphere */}
       <div className="absolute inset-0 pointer-events-none" style={{
-        background: 'radial-gradient(ellipse at 30% 50%, rgba(2,10,28,0.55) 0%, rgba(4,8,22,0.7) 60%), radial-gradient(ellipse at 90% 10%, rgba(0,80,140,0.18) 0%, transparent 50%), radial-gradient(ellipse at 10% 90%, rgba(80,0,110,0.14) 0%, transparent 45%)',
+        background: 'radial-gradient(ellipse at 30% 50%, rgba(15, 23, 42, 0.7) 0%, rgba(5, 10, 25, 0.8) 60%), radial-gradient(ellipse at 80% 20%, rgba(45, 120, 255, 0.3) 0%, transparent 55%), radial-gradient(ellipse at 20% 80%, rgba(140, 40, 200, 0.25) 0%, transparent 50%), radial-gradient(ellipse at 50% 50%, rgba(0, 229, 255, 0.1) 0%, transparent 60%)',
       }}/>
 
       {/* Map (flying state) */}
@@ -798,19 +796,36 @@ export default function GameHUD() {
                 top: '50%', left: '50%',
               }}/>
             ))}
+            {/* ✨ LEFT WIZARD HAND ✨ */}
+            <div 
+              className="absolute z-20 pointer-events-none animate-float"
+              style={{
+                left: '-12%', // Pulls it slightly outside the globe
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: '45%', 
+                height: '80%',
+                backgroundImage: "url('/assets/wizard-hand-left.png')", // You'll need to add this image
+                backgroundSize: 'contain',
+                backgroundPosition: 'right center',
+                backgroundRepeat: 'no-repeat',
+                // Sci-fi magic styling: Glowing cyan drop shadow
+                filter: 'drop-shadow(0 0 25px rgba(0, 229, 255, 0.6)) opacity(0.85)',
+                mixBlendMode: 'screen', // Makes dark backgrounds disappear, creating a hologram effect
+              }}
+            />
             {/* Glowing center for globe */}
             <div className="absolute rounded-full pointer-events-none" style={{
               width: 420, height: 420,
               background: 'radial-gradient(circle, rgba(0,229,255,0.04) 0%, transparent 70%)',
             }}/>
-            <div className="relative z-10" style={{ width: 'min(680px, 96%)', aspectRatio: '1' }}>
+            <div className="relative z-10" style={{ width: 'min(840px, 100%)', aspectRatio: '1' }}>
               <Globe3D
                 factionMap={factionMap}
                 playerFaction={playerState.faction}
                 extraPins={discoveredLandmarks.map((d: any) => {
                   const skip = new Set(['the','a','an','of','in','at','de','la','le','di','du','city','national','monument']);
                   const city = d.location.split(',')[0].trim();
-                  // Take up to 2 meaningful words (skip articles/filler), max 12 chars total
                   const words = city.split(' ').filter((w: string) => !skip.has(w.toLowerCase()) && w.length > 1);
                   const label = words.slice(0, 2).join(' ').toUpperCase().slice(0, 12) || city.split(' ')[0].toUpperCase().slice(0, 8);
                   return { id: d.id, lat: d.lat, lng: d.lng, color: d.geminiColor, label };
@@ -818,6 +833,23 @@ export default function GameHUD() {
                 discoveredLandmarks={discoveredLandmarks.map((d: any) => ({ id: d.id, location: d.location }))}
               />
             </div>
+            {/* ✨ RIGHT WIZARD HAND ✨ */}
+            <div 
+              className="absolute z-20 pointer-events-none animate-float-delayed"
+              style={{
+                right: '-12%', 
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: '45%', 
+                height: '80%',
+                backgroundImage: "url('/assets/wizard-hand-right.png')", // You'll need to add this image
+                backgroundSize: 'contain',
+                backgroundPosition: 'left center',
+                backgroundRepeat: 'no-repeat',
+                filter: 'drop-shadow(0 0 25px rgba(0, 229, 255, 0.6)) opacity(0.85)',
+                mixBlendMode: 'screen',
+              }}
+            />
           </div>
         </div>
       )}
