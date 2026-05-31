@@ -2,14 +2,12 @@
 import { NextResponse } from 'next/server';
 import snowflake from 'snowflake-sdk';
 import { getLandmarkOwner } from '../../utils/backboard';
-import { buildSnowflakePrompt } from '../../utils/prompts';
 import { landmarkRegistry } from '../../data/landmarks';
 
 async function getLiveEnvironment(lat: number, lng: number) {
   try {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
     const timestamp = Math.floor(Date.now() / 1000);
-
     const [weatherRes, tzRes] = await Promise.allSettled([
       fetch(`https://wttr.in/${lat},${lng}?format=j1`, {
         headers: { 'User-Agent': 'WanderLore/1.0' },
@@ -19,12 +17,10 @@ async function getLiveEnvironment(lat: number, lng: number) {
         signal: AbortSignal.timeout(4000),
       }).then(r => r.json()),
     ]);
-
     let weather = 'unstable atmospheric conditions';
     if (weatherRes.status === 'fulfilled') {
       try { weather = weatherRes.value.current_condition[0].weatherDesc[0].value; } catch {}
     }
-
     let localTime = 'Unknown Time';
     if (tzRes.status === 'fulfilled' && tzRes.value.status === 'OK') {
       try {
@@ -32,18 +28,37 @@ async function getLiveEnvironment(lat: number, lng: number) {
         const localTs = timestamp + (tz.rawOffset || 0) + (tz.dstOffset || 0);
         const d = new Date(localTs * 1000);
         const h = d.getUTCHours(), m = d.getUTCMinutes();
-        const ampm = h >= 12 ? 'PM' : 'AM';
-        localTime = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+        localTime = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
       } catch {}
     }
-
     return { localTime, weather };
   } catch {
     return { localTime: 'Unknown Time', weather: 'unstable' };
   }
 }
 
-const generateEncounterWithSnowflake = (landmark: any, faction: string, environment: any): Promise<any> => {
+const generatePrompt = (name: string, faction: string, era: string, setting: string, crisis: string, localTime: string, weather: string) => `
+  You are a historical figure or entity caught in a temporal anomaly at ${name}.
+  Era: ${era}
+  Setting: ${setting}
+  Crisis: ${crisis}
+  Current time at this location: ${localTime}. Weather: ${weather}.
+
+  Your task is to greet the player (a ${faction} operative) in character.
+  Keep it under 3 sentences. React to the crisis, the setting, the time, and weather.
+
+  You MUST output ONLY valid JSON. No markdown formatting. No extra text.
+
+  {
+    "characterName": "Your historical name (e.g., Gustave Eiffel, Local Guide)",
+    "characterPersona": "Your current mood",
+    "puzzleBeginning": "Your dialogue greeting the player",
+    "puzzleEnd": "",
+    "secretTruth": ""
+  }
+`;
+
+const generateEncounterWithSnowflake = (name: string, era: string, setting: string, crisis: string, faction: string, localTime: string, weather: string): Promise<any> => {
   return new Promise((resolve, reject) => {
     const connection = snowflake.createConnection({
       account: process.env.SNOWFLAKE_ACCOUNT || '',
@@ -51,20 +66,17 @@ const generateEncounterWithSnowflake = (landmark: any, faction: string, environm
       password: process.env.SNOWFLAKE_PASSWORD || '',
     });
 
-    connection.connect((err, conn) => {
+    connection.connect((err) => {
       if (err) return reject(`Connection failed: ${err.message}`);
 
-      const systemPrompt = buildSnowflakePrompt(
-        landmark.name, faction, landmark.era, landmark.setting, landmark.figures || [], landmark.crisis, environment
-      );
-      const safePrompt = systemPrompt.replace(/'/g, "''");
+      const safePrompt = generatePrompt(name, faction, era, setting, crisis, localTime, weather).replace(/'/g, "''");
 
       const sqlText = `
         SELECT SNOWFLAKE.CORTEX.COMPLETE(
             'llama3-8b',
             [
                 {'role': 'system', 'content': '${safePrompt}'},
-                {'role': 'user', 'content': 'Generate the lateral thinking puzzle.'}
+                {'role': 'user', 'content': 'Generate the JSON encounter.'}
             ],
             {'temperature': 0.7}
         ) as AI_RESPONSE;
@@ -72,33 +84,41 @@ const generateEncounterWithSnowflake = (landmark: any, faction: string, environm
 
       connection.execute({
         sqlText,
-        complete: (err, stmt, rows) => {
-          if (err) return reject(`Query failed: ${err.message}`);
-          if (!rows || rows.length === 0) return reject("No data returned.");
-
+        complete: (err, _stmt, rows) => {
+          if (err) return reject(err);
+          if (!rows || rows.length === 0) return reject('No data returned from Snowflake.');
           try {
-            const cortexResponse = rows[0].AI_RESPONSE;
-            let rawString = typeof cortexResponse === 'string' ? cortexResponse : JSON.stringify(cortexResponse);
+            let rawString = rows[0].AI_RESPONSE;
+            if (typeof rawString !== 'string') {
+              rawString = rawString?.choices?.[0]?.messages || rawString?.choices?.[0]?.message?.content || JSON.stringify(rawString);
+            }
             rawString = rawString.replace(/```json/gi, '').replace(/```/g, '').trim();
             const firstBrace = rawString.indexOf('{');
             const lastBrace = rawString.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace !== -1) {
-              rawString = rawString.substring(firstBrace, lastBrace + 1);
-            }
+            if (firstBrace !== -1 && lastBrace !== -1) rawString = rawString.substring(firstBrace, lastBrace + 1);
+
             const aiData = JSON.parse(rawString);
             const portraitUrl = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(aiData.characterName || 'Unknown')}`;
+
             resolve({
-              characterName: aiData.characterName || "Unknown Entity",
-              characterPersona: aiData.characterPersona || "Glitching",
-              puzzleBeginning: aiData.puzzleBeginning || "The timeline is fractured.",
-              puzzleEnd: aiData.puzzleEnd || "You must repair it.",
-              secretTruth: aiData.secretTruth || "You need to guess the password.",
+              characterName: aiData.characterName || 'Time Warden',
+              characterPersona: aiData.characterPersona || 'Cautious',
+              puzzleBeginning: aiData.puzzleBeginning || 'Greetings, traveler. The timeline is unstable here, but we will hold the line.',
+              puzzleEnd: '',
+              secretTruth: '',
               portraitUrl,
             });
-          } catch (error) {
-            reject(error);
+          } catch {
+            resolve({
+              characterName: 'Temporal Glitch',
+              characterPersona: 'Corrupted',
+              puzzleBeginning: 'ERROR: Anomaly too strong. I cannot hold physical form... but the territory is exposed.',
+              puzzleEnd: '',
+              secretTruth: '',
+              portraitUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=glitch',
+            });
           }
-        }
+        },
       });
     });
   });
@@ -107,49 +127,50 @@ const generateEncounterWithSnowflake = (landmark: any, faction: string, environm
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    console.log(`[Backend Ping]: Generating puzzle for ${body.landmarkName}...`);
 
-    // Build a landmark object — either from the static registry or from Gemini custom context
-    let landmarkObj: any;
-    const registryEntry = landmarkRegistry.find(l => l.id === body.landmarkId);
+    let name = body.landmarkName;
+    let era = 'Unknown Era';
+    let setting = 'A swirling vortex of time.';
+    let crisis = 'The fabric of reality is tearing.';
+    let lat = body.lat;
+    let lng = body.lng;
 
-    if (registryEntry) {
-      landmarkObj = registryEntry;
-    } else if (body.customContext) {
-      // Gemini-discovered landmark: construct a compatible object
-      landmarkObj = {
-        name: body.landmarkName,
-        era: body.customContext.era,
-        setting: body.customContext.setting,
-        figures: body.customContext.figures || [],
-        crisis: body.customContext.crisis,
-        lat: body.lat,
-        lng: body.lng,
-      };
+    if (body.customContext) {
+      era = body.customContext.era || era;
+      setting = body.customContext.setting || setting;
+      crisis = body.customContext.crisis || crisis;
     } else {
-      return NextResponse.json({ error: 'Landmark not found' }, { status: 404 });
+      const landmarkData = landmarkRegistry.find(l => l.id === body.landmarkId);
+      if (landmarkData) {
+        era = landmarkData.era;
+        setting = landmarkData.setting;
+        crisis = landmarkData.crisis;
+        lat = lat ?? landmarkData.lat;
+        lng = lng ?? landmarkData.lng;
+      }
     }
 
-    // Use pre-fetched atmosphere from client if available, otherwise fetch live
-    let environment: { localTime: string; weather: string };
+    // Use pre-fetched atmosphere if available, otherwise fetch live
+    let localTime = 'Unknown Time';
+    let weather = 'unstable';
     if (body.atmosphere?.localTime) {
-      environment = { localTime: body.atmosphere.localTime, weather: body.atmosphere.weather || 'clear' };
-    } else if (landmarkObj.lat && landmarkObj.lng) {
-      environment = await getLiveEnvironment(landmarkObj.lat, landmarkObj.lng);
-    } else {
-      environment = { localTime: "Unknown Time", weather: "unstable" };
+      localTime = body.atmosphere.localTime;
+      weather = body.atmosphere.weather || 'clear';
+    } else if (lat && lng) {
+      const env = await getLiveEnvironment(lat, lng);
+      localTime = env.localTime;
+      weather = env.weather;
     }
 
-    const aiEncounterData = await generateEncounterWithSnowflake(landmarkObj, body.playerState?.faction || "Chronoguard", environment);
+    const aiEncounterData = await generateEncounterWithSnowflake(
+      name, era, setting, crisis, body.playerState?.faction || 'Chronoguard', localTime, weather
+    );
+
     const liveFactionOwner = await getLandmarkOwner(body.landmarkId);
 
-    return NextResponse.json({
-      ...aiEncounterData,
-      factionOwner: liveFactionOwner,
-    }, { status: 200 });
-
+    return NextResponse.json({ ...aiEncounterData, factionOwner: liveFactionOwner }, { status: 200 });
   } catch (error) {
-    console.error("[Backend Error]:", error);
-    return NextResponse.json({ error: "Failed to process encounter" }, { status: 500 });
+    console.error('[Backend Error]:', error);
+    return NextResponse.json({ error: 'Failed to process encounter' }, { status: 500 });
   }
 }
