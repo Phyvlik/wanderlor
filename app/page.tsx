@@ -384,6 +384,9 @@ export default function GameHUD() {
   const [resultData, setResultData]   = useState<any>(null);
   const [pinColor,   setPinColor]     = useState<string | undefined>(undefined);
   const [playerGuess, setPlayerGuess] = useState('');
+  const [chatLog, setChatLog] = useState<{role: 'ai'|'player', text: string}[]>([]);
+  const [isChatting, setIsChatting] = useState(false);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const [factionMap, setFactionMap]   = useState<Record<string,string>>(() => {
     if (typeof window === 'undefined') return {};
     try { return JSON.parse(localStorage.getItem('wl_factions') || '{}'); } catch { return {}; }
@@ -529,8 +532,71 @@ export default function GameHUD() {
       if (!res.ok || !data.puzzleBeginning) throw new Error('failed');
       
       setEncounterData(data); 
+      setChatLog([{ role: 'ai', text: data.puzzleBeginning }]);
       setGameState('encounter');
     } catch { setGameState('menu'); }
+  };
+
+  const handleChatSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!playerGuess.trim() || isChatting || !encounterData) return;
+
+    const userText = playerGuess.trim();
+    setPlayerGuess(''); // Instantly clear the box!
+    setChatLog(prev => [...prev, { role: 'player', text: userText }]);
+    setIsChatting(true);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userText,
+          characterName: encounterData.characterName,
+          persona: encounterData.characterPersona,
+          history: chatLog
+        })
+      });
+      
+      if (!res.ok) throw new Error("Backend crashed");
+      const data = await res.json();
+      
+      if (data.reply) {
+        setChatLog(prev => [...prev, { role: 'ai', text: data.reply }]);
+        
+        // Trigger ElevenLabs for the AI's reply
+        try {
+          const audioRes = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              text: data.reply, 
+              characterName: encounterData.characterName 
+            }),
+          });
+          
+          if (audioRes.ok) {
+            const audioBlob = await audioRes.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            
+            // Stop any currently playing audio before starting the new one
+            if (activeAudioRef.current) {
+              activeAudioRef.current.pause();
+            }
+            
+            activeAudioRef.current = audio;
+            audio.play();
+          }
+        } catch (audioErr) {
+          console.error("Audio failed to play for chat reply.", audioErr);
+        }
+      }
+    } catch {
+      setChatLog(prev => [...prev, { role: 'ai', text: "*Static interference blocks the response.*" }]);
+    } finally {
+      setIsChatting(false);
+    }
   };
 
   const handleSubmitGuess = async (e: React.FormEvent) => {
@@ -983,11 +1049,11 @@ export default function GameHUD() {
                   </div>
 
                   {/* Dialogue & Input Box */}
-                  <div className="flex-1 rounded-2xl p-6 backdrop-blur-xl mb-4"
-                       style={{ background:'rgba(3,3,7,0.90)', border:'1px solid rgba(0,229,255,0.3)', boxShadow:'0 0 80px -20px rgba(0,229,255,0.2), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
+                  <div className="flex-1 rounded-2xl p-6 backdrop-blur-xl mb-4 flex flex-col"
+                       style={{ background:'rgba(3,3,7,0.90)', border:'1px solid rgba(0,229,255,0.3)', boxShadow:'0 0 80px -20px rgba(0,229,255,0.2), inset 0 1px 0 rgba(255,255,255,0.04)', height: '320px' }}>
                     
                     {/* Header */}
-                    <div className="flex items-end gap-3 mb-2">
+                    <div className="flex items-end gap-3 mb-2 shrink-0">
                       <span className="text-2xl font-black uppercase text-cyan-400 tracking-wider" style={{ fontFamily:'var(--font-cinzel)', textShadow:'0 0 20px rgba(0,229,255,0.5)' }}>
                         {encounterData.characterName}
                       </span>
@@ -996,38 +1062,47 @@ export default function GameHUD() {
                       </span>
                     </div>
                     
-                    <div className="h-px bg-gradient-to-r from-cyan-500/40 to-transparent mb-4"/>
+                    <div className="h-px w-full bg-gradient-to-r from-cyan-500/40 to-transparent mb-4 shrink-0"/>
                     
-                    {/* The Puzzle Text */}
-                    <div className="mb-6 space-y-3">
-                      <p className="text-sm text-neutral-200 leading-relaxed">
-                        "{encounterData.puzzleBeginning}"
-                      </p>
-                      <p className="text-sm font-bold text-red-400 leading-relaxed">
-                        "{encounterData.puzzleEnd}"
-                      </p>
+                    {/* Scrolling Chat Log */}
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 mb-4 custom-scrollbar">
+                      {chatLog.map((msg, idx) => (
+                        <div key={idx} className={`p-3 rounded-xl ${msg.role === 'ai' ? 'bg-cyan-900/20 border border-cyan-500/20 mr-8' : 'bg-white/5 border border-white/10 ml-8'}`}>
+                          <p className={`text-sm leading-relaxed ${msg.role === 'ai' ? 'text-neutral-200' : 'text-neutral-400'}`}>
+                            {msg.role === 'ai' && <span className="font-bold text-cyan-400 mr-2">{encounterData.characterName}:</span>}
+                            {msg.role === 'player' && <span className="font-bold text-white opacity-50 mr-2">You:</span>}
+                            "{msg.text}"
+                          </p>
+                        </div>
+                      ))}
+                      {isChatting && <p className="text-xs font-mono text-cyan-500/50 animate-pulse">Incoming transmission...</p>}
                     </div>
 
-                    {/* Text Input Form */}
-                    <form onSubmit={handleSubmitGuess} className="flex gap-3 mt-auto">
-                      <input
-                        type="text"
-                        value={playerGuess}
-                        onChange={e => setPlayerGuess(e.target.value)}
-                        placeholder="Type your deduction of the Secret Truth..."
-                        className="flex-1 bg-black/60 border border-neutral-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-400 transition-colors"
-                      />
+                    {/* Chat Input & Claim Button */}
+                    <div className="flex gap-3 shrink-0">
+                      <form onSubmit={handleChatSubmit} className="flex-1 flex gap-2">
+                        <input
+                          type="text"
+                          value={playerGuess}
+                          onChange={e => setPlayerGuess(e.target.value)}
+                          disabled={isChatting}
+                          placeholder="Type to chat and press Enter..."
+                          className="flex-1 bg-black/60 border border-neutral-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-400 transition-colors disabled:opacity-50"
+                        />
+                        {/* Hidden submit button so Enter works properly */}
+                        <button type="submit" className="hidden" />
+                      </form>
+                      
+                      {/* The Auto-Win / Claim Button */}
                       <button
-                        type="submit"
-                        disabled={!playerGuess.trim()}
-                        className="px-8 py-3 rounded-xl text-xs font-bold tracking-widest uppercase transition-all disabled:opacity-30"
-                        style={{ background:'rgba(0,229,255,0.1)', border:'1px solid rgba(0,229,255,0.3)', color:'#00E5FF' }}
+                        onClick={handleSubmitGuess}
+                        className="px-6 py-3 rounded-xl text-xs font-bold tracking-widest uppercase transition-all hover:scale-105 active:scale-95 shrink-0"
+                        style={{ background:'rgba(0,229,255,0.15)', border:'1px solid #00E5FF', color:'#00E5FF', boxShadow: '0 0 20px rgba(0,229,255,0.4)' }}
                       >
-                        Interrogate
+                        Claim Territory
                       </button>
-                    </form>
+                    </div>
                   </div>
-
                 </div>
               </div>
             )}
