@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import snowflake from 'snowflake-sdk';
 import type { LandmarkEncounterRequest, LandmarkEncounterResponse } from '../../../types';
 import { getLandmarkOwner } from '../../utils/backboard';
-import { buildSnowflakePrompt } from '../../utils/prompts';
+import { buildSnowflakePrompt, buildCustomPrompt } from '../../utils/prompts';
 
 const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Promise<any> => {
   return new Promise((resolve, reject) => {
@@ -84,10 +84,45 @@ const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Pr
 
 export async function POST(request: Request) {
   try {
-    const body: LandmarkEncounterRequest = await request.json();
+    const body = await request.json();
     console.log(`[Backend Ping]: Generating encounter for ${body.landmarkName}...`);
 
-    // Note: We now pass the landmarkId to the prompt builder instead of just the name!
+    // If custom context is provided (Gemini-discovered landmarks), override the Snowflake prompt
+    if (body.customContext) {
+      const prompt = buildCustomPrompt(body.landmarkName, body.playerState.faction, body.customContext);
+      const safePrompt = prompt.replace(/'/g, "''");
+      const aiEncounterData = await new Promise<any>((resolve, reject) => {
+        const connection = require('snowflake-sdk').createConnection({
+          account: process.env.SNOWFLAKE_ACCOUNT || '',
+          username: process.env.SNOWFLAKE_USERNAME || '',
+          password: process.env.SNOWFLAKE_PASSWORD || '',
+        });
+        connection.connect((err: any) => {
+          if (err) return reject(err);
+          connection.execute({
+            sqlText: `SELECT SNOWFLAKE.CORTEX.COMPLETE('llama3-8b', [{'role':'system','content':'${safePrompt}'},{'role':'user','content':'Generate the encounter.'}], {'temperature':0.7}) as AI_RESPONSE;`,
+            complete: (err: any, _: any, rows: any) => {
+              if (err) return reject(err);
+              try {
+                const raw = rows[0].AI_RESPONSE;
+                const str = (typeof raw === 'string' ? raw : raw?.choices?.[0]?.messages || raw?.choices?.[0]?.message?.content || JSON.stringify(raw))
+                  .replace(/```json/gi,'').replace(/```/g,'').trim();
+                const first = str.indexOf('{'), last = str.lastIndexOf('}');
+                resolve(JSON.parse(first !== -1 ? str.substring(first, last+1) : str));
+              } catch { resolve({ title: 'Anomaly Detected', storyDescription: 'The fabric of history tears at this location.', choices: ['Investigate', 'Retreat'] }); }
+            }
+          });
+        });
+      });
+      return NextResponse.json({
+        title: aiEncounterData.title || 'Anomaly Detected',
+        storyDescription: aiEncounterData.storyDescription || '',
+        choices: aiEncounterData.choices || ['Investigate', 'Retreat'],
+        difficultyRating: Math.floor(Math.random() * 5) + 1,
+        factionOwner: await getLandmarkOwner(body.landmarkId),
+      }, { status: 200 });
+    }
+
     const aiEncounterData = await generateEncounterWithSnowflake(body.landmarkId, body.playerState.faction);
     const liveFactionOwner = await getLandmarkOwner(body.landmarkId);
 
