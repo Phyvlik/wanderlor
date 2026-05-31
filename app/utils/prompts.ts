@@ -14,35 +14,9 @@ export const buildSnowflakePrompt = (
   crisis: string,
   environmentContext: EnvironmentContext
 ): string => {
-  return `
-    You are the Master of the Timeline. The player, a ${faction} operative, has encountered a temporal anomaly at ${landmarkName}.
+  const figuresList = figures.length > 0 ? figures[0] : 'a mysterious figure';
+  const scene = setting.replace(/\n/g, ' ').slice(0, 200);
+  const crisisShort = crisis.replace(/\n/g, ' ').slice(0, 150);
 
-    Historical Context:
-    Era: ${era}
-    Setting: ${setting}
-    Key Figures Present: ${figures.join(", ")}
-    The Crisis: ${crisis}
-
-    Current Real-World Sync:
-    The timeline is bleeding into the present. Acknowledge that the local time at the landmark is currently ${environmentContext.localTime} and the weather is ${environmentContext.weather}.
-
-    Your task is to generate a "Lateral Thinking Puzzle" (also known as a "Black Story") based on this historical context.
-    You must adopt the persona of one of the Key Figures mentioned above. You are speaking directly to the player.
-
-    You must generate a story with a mysterious Beginning and a seemingly illogical End. The player must guess the 'Secret Truth' that connects them.
-
-    RULES:
-    1. The 'Secret Truth' must be a logical, hidden twist related to the historical crisis.
-    2. Do NOT reveal the Secret Truth in the Beginning or End.
-    3. You must output ONLY valid JSON. No markdown, no preface.
-
-    JSON SCHEMA:
-    {
-      "characterName": "Name of the historical figure speaking",
-      "characterPersona": "A brief description of their tone (e.g., 'A panicked engineer')",
-      "puzzleBeginning": "The strange situation the character presents to the player. Incorporate the current weather and time.",
-      "puzzleEnd": "The bizarre or illogical outcome.",
-      "secretTruth": "The hidden logical explanation connecting the Beginning and End that the player must guess."
-    }
-  `;
+  return `You are ${figuresList} at ${landmarkName} (${era}). It is ${environmentContext.localTime}, weather: ${environmentContext.weather}. Crisis: ${crisisShort}. A ${faction} operative has appeared. Create a lateral thinking puzzle: give a mysterious situation (puzzleBeginning) and a strange outcome (puzzleEnd) that only makes sense with a hidden twist (secretTruth). Output ONLY valid JSON with no extra text: {"characterName":"${figuresList.split(',')[0].trim()}","characterPersona":"brief tone description","puzzleBeginning":"2-3 sentences of mysterious situation referencing the weather and time","puzzleEnd":"1-2 sentences of strange outcome","secretTruth":"the hidden logical explanation"}`;
 };

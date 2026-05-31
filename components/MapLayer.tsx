@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface LocationTarget {
   id: string;
@@ -8,6 +8,7 @@ export interface LocationTarget {
   lng: number;
   lat: number;
   height: number;
+  elevation?: number; // raw ground elevation (Gemini landmarks only)
 }
 
 interface MapLayerProps {
@@ -110,6 +111,8 @@ function buildScannerPin(hex: string): string {
 export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
+  const tilesetRef = useRef<any>(null);
+  const [tilesReady, setTilesReady] = useState(false);
   
   const clickHandlerRef = useRef(onMarkerClick);
   useEffect(() => {
@@ -138,6 +141,11 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
     viewerRef.current = viewer;
     viewer.cesiumWidget.creditContainer.style.display = 'none';
 
+    // Lock scene to noon so Google 3D Tiles are always well-lit regardless of real-world time.
+    // Real time/weather data is shown in the HUD separately.
+    viewer.clock.currentTime = window.Cesium.JulianDate.fromIso8601('2024-06-21T12:00:00Z');
+    viewer.clock.shouldAnimate = false;
+
     viewer.scene.screenSpaceCameraController.enableRotate = false;
     viewer.scene.screenSpaceCameraController.lookEventTypes = []; // handled manually via pointer lock
     viewer.scene.screenSpaceCameraController.zoomEventTypes = [window.Cesium.CameraEventType.WHEEL, window.Cesium.CameraEventType.PINCH];
@@ -145,6 +153,7 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
     window.Cesium.GoogleMaps.defaultApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
     window.Cesium.createGooglePhotorealistic3DTileset().then((tileset: any) => {
       viewer.scene.primitives.add(tileset);
+      tilesetRef.current = tileset;
     });
 
     const flags = { W: false, A: false, S: false, D: false };
@@ -256,10 +265,16 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
     const hex = pinColor || '#00E5FF';
     const pinIcon = buildScannerPin(hex);
 
+    // For Gemini landmarks, elevation is the true ground level.
+    // For static presets (no elevation), treat height as ground reference.
+    const groundElev = target.elevation != null ? target.elevation : target.height - 60;
+    const entityAlt  = groundElev + 20;   // marker sits ~20m above terrain
+    const cameraAlt  = groundElev + 150;  // 150m above terrain — safe above uneven ground
+
     viewer.entities.add({
       id: target.id,
       name: target.name,
-      position: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat, target.height),
+      position: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat, entityAlt),
       billboard: {
         image: pinIcon,
         verticalOrigin: window.Cesium.VerticalOrigin.BOTTOM,
@@ -269,17 +284,88 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
       },
     });
 
-    viewer.camera.flyTo({
-      destination: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat - 0.0015, target.height + 40),
-      orientation: {
-        heading: window.Cesium.Math.toRadians(0),
-        pitch: window.Cesium.Math.toRadians(-10),
-        roll: 0.0,
-      },
-      duration: 3 
+    setTilesReady(false);
+
+    // Start further back at same altitude band so tiles for the approach are preloaded
+    viewer.camera.setView({
+      destination: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat - 0.01, cameraAlt * 2.2),
+      orientation: { heading: 0, pitch: window.Cesium.Math.toRadians(-35), roll: 0 },
     });
+
+    // Wait for tiles to actually appear (count rendered frames), then pull back + fly in
+    let frameCount = 0;
+    let cinematicStarted = false;
+
+    const removePostRender = viewer.scene.postRender.addEventListener(() => {
+      if (cinematicStarted) return;
+      frameCount++;
+
+      // Wait until pending tile requests are fully idle AND minimum frames elapsed
+      const ts = tilesetRef.current;
+      const pendingDone = ts
+        ? (ts.statistics?.numberOfPendingRequests ?? 1) === 0 &&
+          (ts.statistics?.numberOfTilesProcessing ?? 1) === 0 &&
+          (ts.statistics?.numberOfTilesWithContentReady ?? 0) > 0
+        : frameCount > 150;
+
+      if (!pendingDone || frameCount < 60) return;
+
+      cinematicStarted = true;
+      removePostRender();
+      clearTimeout(fallback);
+      setTilesReady(true);
+
+      // Dramatic sweep from current (far/high) into the landmark
+      viewer.camera.flyTo({
+        destination: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat - 0.003, cameraAlt * 0.75),
+        orientation: { heading: 0, pitch: window.Cesium.Math.toRadians(-12), roll: 0 },
+        duration: 4,
+        easingFunction: window.Cesium.EasingFunction.CUBIC_IN_OUT,
+      });
+    });
+
+    const fallback = setTimeout(() => {
+      if (!cinematicStarted) { cinematicStarted = true; removePostRender(); setTilesReady(true); }
+    }, 15000);
+
+    return () => { cinematicStarted = true; removePostRender(); clearTimeout(fallback); };
 
   }, [target, pinColor]);
 
-  return <div ref={mapContainer} className="w-full h-full cursor-crosshair" />;
+  return (
+    <div className="relative w-full h-full">
+      <div ref={mapContainer} className="w-full h-full cursor-crosshair" />
+      {/* Loading overlay — hides the blue ocean while Google 3D tiles fetch */}
+      <div
+        className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
+        style={{
+          background: 'radial-gradient(ellipse at center, #020c1b 0%, #000510 100%)',
+          opacity: tilesReady ? 0 : 1,
+          transition: 'opacity 0.8s ease',
+        }}
+      >
+        <div style={{ width: 64, height: 64, position: 'relative', marginBottom: 24 }}>
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            border: '2px solid rgba(0,229,255,0.15)',
+          }}/>
+          <div style={{
+            position: 'absolute', inset: 6, borderRadius: '50%',
+            border: '2px solid transparent',
+            borderTopColor: '#00E5FF',
+            animation: 'spin 1s linear infinite',
+          }}/>
+          <div style={{
+            position: 'absolute', inset: '50%', transform: 'translate(-50%,-50%)',
+            width: 8, height: 8, borderRadius: '50%', background: '#00E5FF',
+            boxShadow: '0 0 12px #00E5FF',
+          }}/>
+        </div>
+        <p style={{ color: '#00E5FF', fontFamily: 'monospace', fontSize: 11, letterSpacing: '0.2em', opacity: 0.7 }}>
+          SYNCING TIMELINE…
+        </p>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    </div>
+  );
 }

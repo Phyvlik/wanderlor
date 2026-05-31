@@ -14,6 +14,7 @@ interface DiscoveredLandmark extends Landmark {
   geminiColor: string;
   location: string;
   description: string;
+  elevation: number;
 }
 // Add this new interface
 interface PuzzleEncounter {
@@ -510,6 +511,8 @@ export default function GameHUD() {
       const body: any = { landmarkId, landmarkName, playerState };
       if (discovered) {
         body.customContext = { era: discovered.era, setting: discovered.setting, crisis: discovered.crisis };
+        body.lat = discovered.lat;
+        body.lng = discovered.lng;
       }
       if (atmosphere) {
         body.atmosphere = {
@@ -524,12 +527,26 @@ export default function GameHUD() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      
+
       // FIX: We now check for puzzleBeginning instead of choices!
       if (!res.ok || !data.puzzleBeginning) throw new Error('failed');
-      
-      setEncounterData(data); 
+
+      // Use human-style avatar immediately, then upgrade to Wikipedia portrait if found
+      const humanFallback = `https://api.dicebear.com/7.x/personas/svg?seed=${encodeURIComponent(data.characterName || 'agent')}`;
+      setEncounterData({ ...data, portraitUrl: humanFallback });
       setGameState('encounter');
+
+      // Non-blocking: swap to real Wikipedia portrait when available
+      if (data.characterName) {
+        fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(data.characterName)}`)
+          .then(r => r.json())
+          .then(wiki => {
+            if (wiki.thumbnail?.source) {
+              setEncounterData((prev: any) => prev ? { ...prev, portraitUrl: wiki.thumbnail.source } : prev);
+            }
+          })
+          .catch(() => {});
+      }
     } catch { setGameState('menu'); }
   };
 
@@ -573,15 +590,15 @@ export default function GameHUD() {
         return;
       }
 
-      // height = elevation + 250m buffer so the camera always spawns above terrain
-      const cameraHeight = (result.elevationMeters ?? 50) + 250;
+      const groundElevation = result.elevationMeters ?? 50;
 
       const newLandmark: DiscoveredLandmark = {
         id,
         name: result.name,
         lat: result.lat,
         lng: result.lng,
-        height: cameraHeight,
+        height: groundElevation + 80,
+        elevation: groundElevation,
         baseDifficulty: Math.floor(Math.random() * 3) + 2,
         era: result.era,
         setting: result.setting,

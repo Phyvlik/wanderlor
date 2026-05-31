@@ -4,6 +4,7 @@ export interface Landmark {
   lat: number;
   lng: number;
   height: number;
+  elevation?: number;
   baseDifficulty: number;
   era: string;
   setting: string;

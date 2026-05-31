@@ -9,15 +9,37 @@ async function getLiveEnvironment(lat: number, lng: number) {
   try {
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
     const timestamp = Math.floor(Date.now() / 1000);
-    const timeRes = await fetch(`https://maps.googleapis.com/maps/api/timezone/json?location=${lat},${lng}&timestamp=${timestamp}&key=${apiKey}`);
-    const timeData = await timeRes.json();
-    const localTimestamp = timestamp + (timeData.dstOffset || 0) + (timeData.rawOffset || 0);
-    const localDate = new Date(localTimestamp * 1000);
-    const localTime = localDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-    const weather = "cloudy with a strange atmospheric pressure";
+
+    const [weatherRes, tzRes] = await Promise.allSettled([
+      fetch(`https://wttr.in/${lat},${lng}?format=j1`, {
+        headers: { 'User-Agent': 'WanderLore/1.0' },
+        signal: AbortSignal.timeout(4000),
+      }).then(r => r.json()),
+      fetch(`https://maps.googleapis.com/maps/api/timezone/json?location=${lat},${lng}&timestamp=${timestamp}&key=${apiKey}`, {
+        signal: AbortSignal.timeout(4000),
+      }).then(r => r.json()),
+    ]);
+
+    let weather = 'unstable atmospheric conditions';
+    if (weatherRes.status === 'fulfilled') {
+      try { weather = weatherRes.value.current_condition[0].weatherDesc[0].value; } catch {}
+    }
+
+    let localTime = 'Unknown Time';
+    if (tzRes.status === 'fulfilled' && tzRes.value.status === 'OK') {
+      try {
+        const tz = tzRes.value;
+        const localTs = timestamp + (tz.rawOffset || 0) + (tz.dstOffset || 0);
+        const d = new Date(localTs * 1000);
+        const h = d.getUTCHours(), m = d.getUTCMinutes();
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        localTime = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+      } catch {}
+    }
+
     return { localTime, weather };
   } catch {
-    return { localTime: "Unknown Time", weather: "unstable" };
+    return { localTime: 'Unknown Time', weather: 'unstable' };
   }
 }
 
