@@ -1,55 +1,29 @@
-# WanderLore
+# WanderLore — Rewrite History, One Landmark at a Time
 
-**The world is the battlefield. Rewrite history, one landmark at a time.**
-
-WanderLore is a real-world multiplayer RPG where players fly over photorealistic 3D cities powered by Google Maps, discover historical landmarks, and battle for faction control through AI-generated story encounters grounded in real history.
+**QuackHacks 2026 Hackathon Project**
+Built by **Vivek Patel** and **Aaron Wong**
 
 ---
 
-## What Was Built
+## What is WanderLore?
 
-### Core Game Loop
-- Players select a mission from the landing page (or search any landmark in the world via Gemini AI)
-- The game deploys them to that real-world location using Google Maps Photorealistic 3D Tiles via CesiumJS
-- Players navigate the 3D environment using WASD + mouse look
-- Clicking the red anomaly marker triggers a historically-grounded AI encounter story
-- Players choose an action, the outcome is resolved, and the landmark is claimed for their faction
+WanderLore is a real-world multiplayer historical RPG layered on top of the actual planet. Search any landmark on Earth — the Eiffel Tower, Big Ben, the Colosseum, Machu Picchu — and get teleported there via photorealistic Google 3D Tiles. An AI-powered historical figure greets you, a crisis is unfolding, and you must resolve it to capture the territory for your faction.
 
-### Landing Page
-- Split-screen layout: mission list on the left, interactive 3D Earth globe on the right
-- Globe built with react-globe.gl using NASA dark Earth texture, country polygon borders, and auto-rotation
-- Captured countries highlight in gold (player) or red (enemy) on the globe
-- GSAP entrance animations on every menu load
+Every discovery is minted as an NFT on Solana. Every territory is contested in real time with other players worldwide.
 
-### AI Story Generation
-- Encounter prompts use Snowflake Cortex (llama3-8b) via Snowflake SDK
-- Each landmark has a richly defined historical era, setting, key figures, and a specific crisis
-- The prompt forces the AI to name real historical figures, use real sensory details, and avoid generic phrases
-- Gemini-discovered landmarks pass their AI-generated context directly to the encounter engine
+---
 
-### Gemini Landmark Search
-- Search bar powered by Gemini 2.5 Flash (server-side, key never exposed to browser)
-- Any real-world location or historical site can be searched
-- Gemini returns name, coordinates, elevation, historical era, vivid setting, specific crisis, and faction color
-- New landmarks animate in as mission cards and appear as pins on the 3D globe
-- Camera height uses real elevation data so high-altitude locations (Machu Picchu, Great Wall) spawn correctly
+## Features
 
-### Persistence
-- Faction ownership and discovered landmarks persist across sessions via localStorage
-- Background sync to Backboard API threads for cross-device persistence
-- Thread ID stored in localStorage, full state retrieved on mount
-
-### 3D Map (Cesium)
-- Google Photorealistic 3D Tiles for real-world city rendering
-- WASD movement with height-relative speed
-- FPS mouse look via Pointer Lock API with software crosshair overlay
-- Red anomaly pins placed at exact coordinates, disappear to back hemisphere
-- Pointer lock: click empty ground to lock, Escape to release, click red pin to trigger encounter
-
-### Faction System
-- Landmark ownership tracked per session and synced to Backboard
-- Resolve API: 70% win chance, updates faction owner on success
-- Globe highlights captured countries in real time when returning to landing
+- **Search any landmark on Earth** — powered by Google Gemini 2.5 Flash. Type "Big Ben", "Angkor Wat", "Stonehenge" — WanderLore identifies the site, generates its historical context, and pins it on the globe.
+- **Photorealistic 3D fly-to** — CesiumJS with Google Photorealistic 3D Tiles drops you at street level with a cinematic camera sweep. Real building geometry, real elevation data.
+- **AI-generated historical encounters** — Snowflake Cortex (llama3-8b) generates a unique encounter at every landmark: a real historical figure, their current mood, and a crisis you must resolve through dialogue.
+- **Real-time weather & timezone** — Encounter context is live. The AI knows the actual local time and weather at that landmark right now.
+- **Faction territory capture** — Chronoguard vs rival factions. Every landmark on Earth is contested. Capture it and it shows your faction's color on every player's globe.
+- **NFT minting on Solana Devnet** — Every discovered landmark can be minted as a unique NFT via Phantom wallet. Metadata stored permanently on Arweave via Irys.
+- **Live multiplayer state** — Territory ownership synced in real time across all sessions via Backboard.
+- **Text-to-speech narration** — Historical figure dialogue voiced by ElevenLabs.
+- **Interactive globe** — Animated 3D globe (react-globe.gl / Three.js) shows all captured territories as glowing faction markers.
 
 ---
 
@@ -57,39 +31,93 @@ WanderLore is a real-world multiplayer RPG where players fly over photorealistic
 
 | Layer | Technology |
 |---|---|
-| Framework | Next.js 16 (App Router, TypeScript) |
-| 3D Map | CesiumJS 1.114 + Google Photorealistic 3D Tiles |
-| Globe Visualization | react-globe.gl + three-globe (NASA dark Earth texture) |
-| AI Story Generation | Snowflake Cortex (llama3-8b via Snowflake SDK) |
-| Landmark Discovery | Gemini 2.5 Flash (Google Generative AI) |
-| Persistence | Backboard API (threads as state store) + localStorage |
-| Animations | GSAP 3 |
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript |
 | Styling | Tailwind CSS v4 |
-| Font | Cinzel Decorative (Google Fonts) |
+| 3D Globe | react-globe.gl, Three.js |
+| 3D Map | CesiumJS + Google Photorealistic 3D Tiles |
+| Landmark AI | Google Gemini 2.5 Flash |
+| Encounter AI | Snowflake Cortex (llama3-8b) |
+| Chat AI | Snowflake Cortex (llama3-8b) |
+| Geocoding | Google Maps Geocoding API + Elevation API |
+| Weather | wttr.in |
+| Blockchain | Solana Devnet |
+| Wallet | Phantom |
+| NFT Storage | Arweave via Irys |
+| NFT Standard | Metaplex Token Metadata |
+| TTS | ElevenLabs |
+| Multiplayer | Backboard |
+| Deployment | DigitalOcean App Platform |
+| Animations | GSAP |
 
 ---
 
-## Environment Variables
-
-Create a `.env.local` file in the project root:
+## Architecture
 
 ```
-SNOWFLAKE_ACCOUNT=your_account
-SNOWFLAKE_USERNAME=your_username
-SNOWFLAKE_PASSWORD=your_password
-NEXT_PUBLIC_GOOGLE_MAPS_KEY=your_google_maps_api_key
-BACKBOARD_API_KEY=your_backboard_key
-GEMINI_API_KEY=your_gemini_key
+User searches "Big Ben"
+        │
+        ▼
+/api/gemini  ──── Gemini 2.5 Flash generates historical context (name, era, crisis, setting)
+        │    ──── Google Geocoding API verifies exact coordinates + elevation in parallel
+        │
+        ▼
+Globe pins the landmark → User clicks DEPLOY
+        │
+        ▼
+CesiumJS flies camera to real 3D location
+        │
+        ▼
+/api/encounter ── Snowflake Cortex generates character + opening dialogue
+             ──── wttr.in + Google Timezone API adds live weather/time context
+        │
+        ▼
+Player chats with historical figure ── /api/chat via Snowflake Cortex
+        │
+        ▼
+Territory captured → synced to Backboard (multiplayer)
+        │
+        ▼
+Player mints NFT → Metaplex on Solana Devnet, metadata on Arweave
 ```
-
-**Important:** `GEMINI_API_KEY` and `BACKBOARD_API_KEY` must NOT use the `NEXT_PUBLIC_` prefix. Both are called server-side via API routes to keep keys out of the browser bundle.
 
 ---
 
 ## Getting Started
 
+### Prerequisites
+
+- Node.js 18+
+- A Phantom wallet browser extension (for NFT minting)
+- API keys (see below)
+
+### Installation
+
 ```bash
+git clone https://github.com/Abulala1/wanderlor.git
+cd wanderlor
 npm install
+```
+
+### Environment Variables
+
+Create a `.env.local` file in the project root:
+
+```env
+GEMINI_API_KEY=your_gemini_api_key
+SNOWFLAKE_ACCOUNT=your_snowflake_account
+SNOWFLAKE_USERNAME=your_snowflake_username
+SNOWFLAKE_PASSWORD=your_snowflake_password
+ELEVENLABS_API_KEY=your_elevenlabs_key
+BACKBOARD_API_KEY=your_backboard_key
+NEXT_PUBLIC_GOOGLE_MAPS_KEY=your_google_maps_key
+NEXT_PUBLIC_SOLANA_APP_PUBKEY=your_solana_pubkey
+SOLANA_PRIVATE_KEY=[your,private,key,bytes]
+```
+
+### Run
+
+```bash
 npm run dev
 ```
 
@@ -97,48 +125,33 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Project Structure
+## How to Play
 
-```
-app/
-  api/
-    encounter/route.ts     AI encounter generation via Snowflake Cortex
-    resolve/route.ts       Choice resolution + faction capture
-    gemini/route.ts        Landmark search via Gemini 2.5 Flash
-    gamestate/route.ts     Backboard sync for faction + discovered landmarks
-  data/landmarks.ts        Static landmark definitions (era, setting, figures, crisis)
-  utils/
-    backboard.ts           Backboard API client
-    prompts.ts             Snowflake Cortex prompt builders
-  page.tsx                 Main game HUD + state machine
-  layout.tsx               Loads CesiumJS, Cinzel font
-components/
-  MapLayer.tsx             CesiumJS viewer, WASD, pointer lock, anomaly pins
-  Globe3D.tsx              react-globe.gl Earth with country highlights
-lib/
-  gemini.ts                Gemini landmark search (calls /api/gemini)
-```
+1. **Connect your Phantom wallet** using the Connect button
+2. **Search any landmark** — type a name in the search bar and hit SCAN
+3. **Select a mission** from your discovered list or the preset landmarks
+4. **Click DEPLOY** to fly to the landmark in 3D
+5. **Talk to the historical figure** — resolve their crisis through dialogue
+6. **Capture the territory** for the Chronoguard faction
+7. **Mint your discovery** as an NFT on Solana Devnet
 
 ---
 
-## What Still Needs Work
+## Prize Categories
 
-- [ ] Real multiplayer: player positions synced via WebSocket so multiple players share the same globe state live
-- [ ] ElevenLabs voice narration: the SDK is installed but not wired up. Encounter story text could be read aloud on arrival
-- [ ] More landmarks: the static registry only has 3. Could pre-seed 20-30 famous landmarks
-- [ ] Player profiles: currently hardcoded as `demo_user_1 / Chronoguard`. Add auth and multiple factions
-- [ ] Faction colors on Cesium map: after capturing a landmark, recolor the Cesium anomaly pin to faction color (partially done)
-- [ ] Mobile support: pointer lock and WASD do not translate well to touch
-- [ ] Encounter result narration: the resolve API returns static text. Could use Snowflake or Gemini to generate dynamic outcome text based on the choice made
-- [ ] Leaderboard: faction ownership scores across all players
+- **Best Use of Snowflake** — AI encounter generation and real-time chat with historical figures powered entirely by Snowflake Cortex (llama3-8b)
+- **Best Use of DigitalOcean** — Deployed on DigitalOcean App Platform
+- **Best Use of Solana** — NFT minting for every landmark discovery, stored permanently on Arweave
 
 ---
 
-## Demo Flow for Judges
+## Team
 
-1. Open the landing page and observe the rotating Earth with landmark pins
-2. Search "Angkor Wat" in the search bar and watch Gemini add it as a new mission card
-3. Select "The Eiffel Tower" and deploy to Paris in photorealistic 3D
-4. Navigate to the red pin, click it, read the AI-generated 1889 story encounter
-5. Make a choice, win the territory, return to landing
-6. Watch France highlight gold on the globe
+| Name | Role |
+|---|---|
+| Vivek Patel | Full-stack development, 3D map integration, AI pipeline |
+| Aaron Wong | Full-stack development, blockchain integration, game design |
+
+---
+
+*Built at QuackHacks 2026*
