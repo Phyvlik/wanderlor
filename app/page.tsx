@@ -601,7 +601,13 @@ export default function GameHUD() {
                 Rewrite History · One Landmark at a Time
               </p>
               <div className="mb-3">
-                <WalletConnect onConnect={setWalletAddress} onDisconnect={() => setWalletAddress('')} />
+                <div className="flex items-center gap-2">
+                  <WalletConnect onConnect={setWalletAddress} onDisconnect={() => setWalletAddress('')} />
+                  <button onClick={toggleBGM} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-mono tracking-wider uppercase transition-all hover:scale-105 active:scale-95" style={{ background: isMuted ? 'rgba(255,255,255,0.05)' : 'rgba(0,229,255,0.1)', border: `1px solid ${isMuted ? 'rgba(255,255,255,0.12)' : 'rgba(0,229,255,0.3)'}`, color: isMuted ? 'rgba(255,255,255,0.55)' : '#00E5FF' }}>
+                    {isMuted ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg> : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>}
+                    {isMuted ? 'Music Off' : 'Music On'}
+                  </button>
+                </div>
                 {walletAddress && (
                   <p className="text-xs font-mono text-neutral-500 mt-1">
                     ◎ Discoveries mint as NFTs on Solana Devnet
