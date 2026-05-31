@@ -179,6 +179,8 @@ export default function GameHUD() {
   const rightPanelRef  = useRef<HTMLDivElement>(null);
   const discoveredRef  = useRef<HTMLDivElement>(null);
   const chatScrollRef  = useRef<HTMLDivElement>(null);
+  const [isMuted, setIsMuted] = useState(true); 
+  const bgmRef = useRef<HTMLAudioElement | null>(null);
 
   /* Starfield */
   useEffect(() => {
@@ -522,6 +524,18 @@ export default function GameHUD() {
       setSearchError(msg.includes('JSON') || msg.includes('502') ? 'Gemini returned an unexpected response — try again.' : `Could not identify "${searchQuery.trim()}". Try a more specific name.`);
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const toggleBGM = () => {
+    if (!bgmRef.current) return;
+    if (isMuted) {
+      bgmRef.current.play().catch(() => console.log("Audio play blocked by browser"));
+      bgmRef.current.volume = 0.4;
+      setIsMuted(false);
+    } else {
+      bgmRef.current.pause();
+      setIsMuted(true);
     }
   };
 
@@ -881,6 +895,25 @@ export default function GameHUD() {
             </div>
             <div className="flex items-center gap-3 ml-auto">
               <WalletConnect onConnect={setWalletAddress} onDisconnect={() => setWalletAddress('')} />
+              
+              {/* Sound Toggle Button */}
+              <button
+                onClick={toggleBGM}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-mono tracking-wider uppercase transition-all hover:scale-105 active:scale-95"
+                style={{ 
+                  background: isMuted ? 'rgba(255,255,255,0.05)' : 'rgba(0,229,255,0.1)', 
+                  border: `1px solid ${isMuted ? 'rgba(255,255,255,0.12)' : 'rgba(0,229,255,0.3)'}`, 
+                  color: isMuted ? 'rgba(255,255,255,0.55)' : '#00E5FF' 
+                }}
+              >
+                {isMuted ? (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                )}
+                {isMuted ? 'Audio Off' : 'Audio On'}
+              </button>
+
             {activeDisplay && (
               <div className="flex items-center gap-3">
                 {/* Weather badge — always visible in flying state */}
@@ -1164,6 +1197,13 @@ export default function GameHUD() {
           </div>
         </div>
       )}
+    {/* Hidden BGM Audio Element */}
+      <audio 
+        ref={bgmRef} 
+        src="/assets/bgm.mp3" 
+        loop 
+        preload="auto" 
+      />
     </main>
   );
 }
