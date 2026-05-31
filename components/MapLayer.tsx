@@ -13,9 +13,10 @@ export interface LocationTarget {
 interface MapLayerProps {
   target: LocationTarget;
   onMarkerClick: (landmarkId: string, landmarkName: string) => void;
+  pinColor?: string;
 }
 
-export default function MapLayer({ target, onMarkerClick }: MapLayerProps) {
+export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
   
@@ -46,12 +47,8 @@ export default function MapLayer({ target, onMarkerClick }: MapLayerProps) {
     viewerRef.current = viewer;
     viewer.cesiumWidget.creditContainer.style.display = 'none';
 
-    // --- FIX 1: THE LAPTOP TRACKPAD & FPS MOUSE FIX ---
-    // 1. Stop grabbing the Earth (Disables orbiting)
-    viewer.scene.screenSpaceCameraController.enableRotate = false; 
-    // 2. Make Left-Click-Drag turn your head in place (FPS Style)
-    viewer.scene.screenSpaceCameraController.lookEventTypes = [window.Cesium.CameraEventType.LEFT_DRAG];
-    // 3. Keep two-finger trackpad swipe / scroll wheel for zooming
+    viewer.scene.screenSpaceCameraController.enableRotate = false;
+    viewer.scene.screenSpaceCameraController.lookEventTypes = []; // handled manually via pointer lock
     viewer.scene.screenSpaceCameraController.zoomEventTypes = [window.Cesium.CameraEventType.WHEEL, window.Cesium.CameraEventType.PINCH];
 
     window.Cesium.GoogleMaps.defaultApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || "";
@@ -91,37 +88,67 @@ export default function MapLayer({ target, onMarkerClick }: MapLayerProps) {
       if (flags.D) camera.moveRight(moveRate);
     });
 
-    // --- FIX 2: THE BULLETPROOF CLICK HANDLER ---
-    const handler = new window.Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-    handler.setInputAction((click: any) => {
-      // Grab whatever pixel the mouse just touched
-      const pickedObject = viewer.scene.pick(click.position);
-      
-      // Print it to the browser console so we can see if you missed!
-      console.log("🎯 YOU CLICKED ON:", pickedObject); 
+    // FPS mouse look via Pointer Lock
+    const canvas = viewer.scene.canvas;
+    const sensitivity = 0.003;
 
-      if (window.Cesium.defined(pickedObject) && pickedObject.id) {
-        const entity = pickedObject.id;
-        
-        // Double check that it has our custom ID and Name
-        if (entity.id && entity.name) {
-          console.log("🚀 LAUNCHING AI FOR:", entity.name);
-          clickHandlerRef.current(entity.id as string, entity.name as string);
-        }
+    // Software crosshair shown while pointer is locked (replaces hidden native cursor)
+    const cursorEl = document.createElement('div');
+    cursorEl.style.cssText = 'position:fixed;width:18px;height:18px;border:2.5px solid white;border-radius:50%;pointer-events:none;z-index:9999;transform:translate(-50%,-50%);display:none;box-shadow:0 0 6px rgba(0,0,0,0.9)';
+    document.body.appendChild(cursorEl);
+
+    let softX = window.innerWidth / 2;
+    let softY = window.innerHeight / 2;
+    const moveCursor = () => { cursorEl.style.left = softX + 'px'; cursorEl.style.top = softY + 'px'; };
+
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === canvas) {
+        cursorEl.style.display = 'block';
       } else {
-         console.log("❌ Missed the pin. You clicked empty space or a building.");
+        cursorEl.style.display = 'none';
       }
-    }, window.Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    });
 
-    // Also trigger on Left-UP just in case the trackpad drag cancels the click
-    handler.setInputAction((click: any) => {
-      const pickedObject = viewer.scene.pick(click.position);
-      if (window.Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.id && pickedObject.id.name) {
-        clickHandlerRef.current(pickedObject.id.id as string, pickedObject.id.name as string);
+    const handleMouseLook = (e: MouseEvent) => {
+      if (document.pointerLockElement !== canvas) return;
+      viewer.camera.lookRight(e.movementX * sensitivity);
+      viewer.camera.lookDown(e.movementY * sensitivity);
+      softX = Math.max(0, Math.min(window.innerWidth, softX + e.movementX));
+      softY = Math.max(0, Math.min(window.innerHeight, softY + e.movementY));
+      moveCursor();
+    };
+    document.addEventListener('mousemove', handleMouseLook);
+
+    canvas.addEventListener('click', (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      let pickX: number, pickY: number;
+
+      if (document.pointerLockElement === canvas) {
+        // Use software cursor position when locked
+        pickX = softX - rect.left;
+        pickY = softY - rect.top;
+      } else {
+        // Use native cursor position and sync software cursor for when lock activates
+        pickX = e.clientX - rect.left;
+        pickY = e.clientY - rect.top;
+        softX = e.clientX;
+        softY = e.clientY;
+        moveCursor();
       }
-    }, window.Cesium.ScreenSpaceEventType.LEFT_UP);
+
+      const picked = viewer.scene.pick(new window.Cesium.Cartesian2(pickX, pickY));
+      if (window.Cesium.defined(picked) && picked.id?.id && picked.id?.name) {
+        document.exitPointerLock();
+        clickHandlerRef.current(picked.id.id as string, picked.id.name as string);
+      } else if (document.pointerLockElement !== canvas) {
+        canvas.requestPointerLock();
+      }
+    });
 
     return () => {
+      document.removeEventListener('mousemove', handleMouseLook);
+      document.exitPointerLock();
+      if (document.body.contains(cursorEl)) document.body.removeChild(cursorEl);
       if (viewerRef.current) {
         viewerRef.current.destroy();
         viewerRef.current = null;
@@ -136,7 +163,10 @@ export default function MapLayer({ target, onMarkerClick }: MapLayerProps) {
     viewer.entities.removeAll();
 
     const pinBuilder = new window.Cesium.PinBuilder();
-    const pinIcon = pinBuilder.fromColor(window.Cesium.Color.CRIMSON, 56).toDataURL(); // Made the pin larger!
+    const color = pinColor
+      ? window.Cesium.Color.fromCssColorString(pinColor)
+      : window.Cesium.Color.CRIMSON;
+    const pinIcon = pinBuilder.fromColor(color, 56).toDataURL();
 
     viewer.entities.add({
       id: target.id, 
@@ -172,7 +202,7 @@ export default function MapLayer({ target, onMarkerClick }: MapLayerProps) {
       duration: 3 
     });
 
-  }, [target]);
+  }, [target, pinColor]);
 
   return <div ref={mapContainer} className="w-full h-full cursor-crosshair" />;
 }
