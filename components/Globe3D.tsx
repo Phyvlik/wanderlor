@@ -80,8 +80,8 @@ export default function Globe3D({
     ro.observe(el); return () => ro.disconnect();
   }, []);
 
-  /* Globe setup after mount */
-  useEffect(() => {
+  /* Globe setup — runs on mount and after every key-triggered remount */
+  const setupGlobe = () => {
     if (!globeRef.current) return;
     const ctrl = globeRef.current.controls();
     ctrl.autoRotate      = true;
@@ -89,7 +89,9 @@ export default function Globe3D({
     ctrl.enableZoom      = false;
     ctrl.enablePan       = false;
     globeRef.current.pointOfView({ altitude: 1.7 });
-  }, [ready]);
+  };
+
+  useEffect(() => { setupGlobe(); }, [ready]);
 
   /* Which countries are captured and by whom */
   const capturedCountries = useMemo(() => {
@@ -187,6 +189,8 @@ export default function Globe3D({
           key={Object.keys(capturedCountries).sort().join('|')}
           width={size.w}
           height={size.h}
+
+          onGlobeReady={setupGlobe}
 
           /* ── Earth texture ── */
           globeImageUrl="//unpkg.com/three-globe/example/img/earth-dark.jpg"

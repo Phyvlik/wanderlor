@@ -168,6 +168,8 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
     };
 
     document.addEventListener('keydown', (e) => {
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       const f = getFlag(e.code);
       if (f) flags[f as keyof typeof flags] = true;
     });
@@ -176,6 +178,14 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
       const f = getFlag(e.code);
       if (f) flags[f as keyof typeof flags] = false;
     });
+
+    const clearFlagsOnFocus = () => {
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        flags.W = flags.A = flags.S = flags.D = false;
+      }
+    };
+    document.addEventListener('focusin', clearFlagsOnFocus);
 
     viewer.scene.preUpdate.addEventListener(() => {
       const camera = viewer.camera;
