@@ -28,7 +28,7 @@ interface PuzzleEncounter {
   factionOwner: string;
 }
 /* ── Per-landmark personality ─────────────────────────────── */
-const META: Record<string, { color: string; label: string; Icon: () => JSX.Element }> = {
+const META: Record<string, { color: string; label: string; Icon: () => React.ReactElement }> = {
   colosseum_rome: {
     color: '#FFB800',
     label: 'ANCIENT ROME · 80 AD',
