@@ -5,7 +5,7 @@ import type { LandmarkEncounterRequest, LandmarkEncounterResponse } from '../../
 import { getLandmarkOwner } from '../../utils/backboard';
 import { buildSnowflakePrompt, buildCustomPrompt } from '../../utils/prompts';
 
-const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Promise<any> => {
+const generateEncounterWithSnowflake = (landmarkId: string, faction: string, atmosphere?: any): Promise<any> => {
   return new Promise((resolve, reject) => {
     const connection = snowflake.createConnection({
         account: process.env.SNOWFLAKE_ACCOUNT || '',
@@ -17,7 +17,7 @@ const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Pr
       if (err) return reject(`Connection failed: ${err.message}`);
 
       // Generate the dynamic prompt from our utils file
-      const systemPrompt = buildSnowflakePrompt(landmarkId, faction);
+      const systemPrompt = buildSnowflakePrompt(landmarkId, faction, atmosphere);
       const safePrompt = systemPrompt.replace(/'/g, "''");
 
       const sqlText = `
@@ -89,7 +89,7 @@ export async function POST(request: Request) {
 
     // If custom context is provided (Gemini-discovered landmarks), override the Snowflake prompt
     if (body.customContext) {
-      const prompt = buildCustomPrompt(body.landmarkName, body.playerState.faction, body.customContext);
+      const prompt = buildCustomPrompt(body.landmarkName, body.playerState.faction, body.customContext, body.atmosphere);
       const safePrompt = prompt.replace(/'/g, "''");
       const aiEncounterData = await new Promise<any>((resolve, reject) => {
         const connection = require('snowflake-sdk').createConnection({
@@ -123,7 +123,7 @@ export async function POST(request: Request) {
       }, { status: 200 });
     }
 
-    const aiEncounterData = await generateEncounterWithSnowflake(body.landmarkId, body.playerState.faction);
+    const aiEncounterData = await generateEncounterWithSnowflake(body.landmarkId, body.playerState.faction, body.atmosphere);
     const liveFactionOwner = await getLandmarkOwner(body.landmarkId);
 
     const responsePayload: LandmarkEncounterResponse = {

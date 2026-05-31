@@ -9,6 +9,27 @@ const LANDMARK_COUNTRY: Record<string, string> = {
   tokyo_tower_japan:  'Japan',
 };
 
+/* ── Short-form country aliases → GeoJSON full name ──────── */
+const COUNTRY_ALIASES: Record<string, string> = {
+  'usa':                        'United States of America',
+  'us':                         'United States of America',
+  'united states':              'United States of America',
+  'uk':                         'United Kingdom',
+  'great britain':              'United Kingdom',
+  'uae':                        'United Arab Emirates',
+  'south korea':                'South Korea',
+  'north korea':                'North Korea',
+  'russia':                     'Russia',
+  'czech republic':             'Czechia',
+  'ivory coast':                "Côte d'Ivoire",
+  'taiwan':                     'Taiwan',
+};
+
+function normalizeCountry(raw: string): string {
+  const clean = raw.trim();
+  return COUNTRY_ALIASES[clean.toLowerCase()] ?? clean;
+}
+
 const STATIC_PINS = [
   { id: 'colosseum_rome',     lat: 41.9, lng:  12.5, color: '#FFB800', label: 'ROME'  },
   { id: 'eiffel_tower_paris', lat: 48.9, lng:   2.3, color: '#00E5FF', label: 'PARIS' },
@@ -64,10 +85,10 @@ export default function Globe3D({
     if (!globeRef.current) return;
     const ctrl = globeRef.current.controls();
     ctrl.autoRotate      = true;
-    ctrl.autoRotateSpeed = 0.7;
+    ctrl.autoRotateSpeed = 3.5;
     ctrl.enableZoom      = false;
     ctrl.enablePan       = false;
-    globeRef.current.pointOfView({ altitude: 1.7 }); // closer = bigger globe
+    globeRef.current.pointOfView({ altitude: 1.7 });
   }, [ready]);
 
   /* Which countries are captured and by whom */
@@ -75,14 +96,14 @@ export default function Globe3D({
     const map: Record<string, string> = {}; // country name → faction
     Object.entries(factionMap).forEach(([id, faction]) => {
       if (!faction || faction === 'Unclaimed') return;
-      // Static
+      // Static landmarks
       if (LANDMARK_COUNTRY[id]) map[LANDMARK_COUNTRY[id]] = faction;
-      // Discovered
+      // Gemini-discovered landmarks
       const disc = discoveredLandmarks.find(d => d.id === id);
       if (disc?.location) {
         const parts = disc.location.split(',');
-        const country = parts[parts.length - 1].trim();
-        if (country) map[country] = faction;
+        const rawCountry = parts[parts.length - 1].trim();
+        if (rawCountry) map[normalizeCountry(rawCountry)] = faction;
       }
     });
     return map;
@@ -151,8 +172,8 @@ export default function Globe3D({
     <div
       ref={containerRef}
       className="w-full h-full"
-      onMouseEnter={() => globeRef.current?.controls() && (globeRef.current.controls().autoRotateSpeed = 0.15)}
-      onMouseLeave={() => globeRef.current?.controls() && (globeRef.current.controls().autoRotateSpeed = 0.7)}
+      onMouseEnter={() => globeRef.current?.controls() && (globeRef.current.controls().autoRotateSpeed = 0.4)}
+      onMouseLeave={() => globeRef.current?.controls() && (globeRef.current.controls().autoRotateSpeed = 3.5)}
       style={{
         filter: hasCaptured
           ? 'drop-shadow(0 0 40px rgba(255,190,40,0.2)) drop-shadow(0 0 80px rgba(0,100,255,0.15))'
@@ -163,6 +184,7 @@ export default function Globe3D({
       {size.w > 0 && (
         <Globe
           ref={globeRef}
+          key={Object.keys(capturedCountries).sort().join('|')}
           width={size.w}
           height={size.h}
 

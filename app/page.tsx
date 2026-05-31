@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { gsap } from 'gsap';
 import type { LandmarkEncounterResponse } from '../types';
@@ -289,6 +289,85 @@ function _Unused({ factionMap, playerFaction }: { factionMap: Record<string, str
 }
 
 /* ── Main component ─────────────────────────────────────── */
+/* ── Weather visual overlay ──────────────────────────────── */
+function WeatherOverlay({ atmosphere }: { atmosphere: { weather: any; timezone: any } | null }) {
+  const particles = useMemo(() => Array.from({ length: 80 }, (_, i) => ({
+    id: i,
+    left: Math.random() * 100,
+    delay: Math.random() * 2,
+    duration: 0.35 + Math.random() * 0.4,
+    height: 10 + Math.random() * 14,
+    size: 1 + Math.random() * 1.5,
+  })), []);
+
+  if (!atmosphere) return null;
+
+  const { category, icon } = atmosphere.weather;
+  const { isDaytime } = atmosphere.timezone;
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {/* Night tint */}
+      {!isDaytime && (
+        <div className="absolute inset-0" style={{ background: 'rgba(0,0,30,0.4)', mixBlendMode: 'multiply' }} />
+      )}
+
+      {/* Rain drops */}
+      {(category === 'rain' || category === 'storm') && particles.slice(0, 80).map(p => (
+        <div key={p.id} className="absolute" style={{
+          left: `${p.left}%`, top: 0,
+          width: '1.5px', height: `${p.height}px`,
+          background: 'linear-gradient(to bottom, rgba(174,210,240,0.0), rgba(174,210,240,0.6))',
+          animationName: 'rain-drop',
+          animationDuration: `${p.duration}s`,
+          animationDelay: `${p.delay}s`,
+          animationTimingFunction: 'linear',
+          animationIterationCount: 'infinite',
+        }} />
+      ))}
+
+      {/* Lightning flash for storms */}
+      {category === 'storm' && (
+        <div className="absolute inset-0" style={{
+          background: 'rgba(200,220,255,0.12)',
+          animationName: 'lightning',
+          animationDuration: '4s',
+          animationTimingFunction: 'linear',
+          animationIterationCount: 'infinite',
+          animationDelay: `${Math.random() * 3}s`,
+        }} />
+      )}
+
+      {/* Snowflakes */}
+      {category === 'snow' && particles.slice(0, 50).map(p => (
+        <div key={p.id} className="absolute rounded-full" style={{
+          left: `${p.left}%`, top: 0,
+          width: `${p.size}px`, height: `${p.size}px`,
+          background: 'rgba(255,255,255,0.75)',
+          animationName: 'snow-drift',
+          animationDuration: `${2 + p.duration * 4}s`,
+          animationDelay: `${p.delay * 2}s`,
+          animationTimingFunction: 'linear',
+          animationIterationCount: 'infinite',
+        }} />
+      ))}
+
+      {/* Fog */}
+      {category === 'fog' && (
+        <div className="absolute inset-0" style={{
+          background: 'rgba(180,190,200,0.18)',
+          backdropFilter: 'blur(1.5px)',
+          animationName: 'fog-drift',
+          animationDuration: '8s',
+          animationTimingFunction: 'ease-in-out',
+          animationIterationCount: 'infinite',
+        }} />
+      )}
+
+    </div>
+  );
+}
+
 export default function GameHUD() {
   const [gameState, setGameState] = useState<'menu'|'flying'|'loading'|'encounter'|'resolving'|'result'>('menu');
   const [activeTarget, setActiveTarget] = useState<Landmark | null>(null);
@@ -299,6 +378,7 @@ export default function GameHUD() {
     if (typeof window === 'undefined') return {};
     try { return JSON.parse(localStorage.getItem('wl_factions') || '{}'); } catch { return {}; }
   });
+  const [atmosphere, setAtmosphere] = useState<{ weather: any; timezone: any } | null>(null);
   const [searchQuery,        setSearchQuery]        = useState('');
   const [isSearching,        setIsSearching]        = useState(false);
   const [searchError,        setSearchError]        = useState('');
@@ -402,7 +482,14 @@ export default function GameHUD() {
   const handleSelectMission = (m: Landmark) => {
     const owner = factionMap[m.id];
     setPinColor(owner && owner !== 'Unclaimed' ? (owner === playerState.faction ? '#00E5FF' : '#FF0044') : undefined);
-    setActiveTarget(m); setGameState('flying');
+    setAtmosphere(null);
+    setActiveTarget(m);
+    setGameState('flying');
+    // Fetch real weather + local time in background
+    fetch(`/api/weather-tz?lat=${m.lat}&lng=${m.lng}`)
+      .then(r => r.json())
+      .then(data => { if (data.weather) setAtmosphere(data); })
+      .catch(() => {});
   };
 
   const handleMarkerClick = async (landmarkId: string, landmarkName: string) => {
@@ -413,6 +500,14 @@ export default function GameHUD() {
       const body: any = { landmarkId, landmarkName, playerState };
       if (discovered) {
         body.customContext = { era: discovered.era, setting: discovered.setting, crisis: discovered.crisis };
+      }
+      if (atmosphere) {
+        body.atmosphere = {
+          weather: atmosphere.weather.condition,
+          tempC: atmosphere.weather.tempC,
+          localTime: atmosphere.timezone.localTimeStr,
+          isDaytime: atmosphere.timezone.isDaytime,
+        };
       }
       const res = await fetch('/api/encounter', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -726,11 +821,13 @@ export default function GameHUD() {
               <Globe3D
                 factionMap={factionMap}
                 playerFaction={playerState.faction}
-                extraPins={discoveredLandmarks.map(d => {
-                  const skip = new Set(['the','a','an','of','in','at','de','la','le','di','du']);
-                  const city = d.location.split(',')[0];
-                  const word = city.split(' ').find((w: string) => !skip.has(w.toLowerCase())) || city;
-                  return { id: d.id, lat: d.lat, lng: d.lng, color: d.geminiColor, label: word.toUpperCase().slice(0, 9) };
+                extraPins={discoveredLandmarks.map((d: any) => {
+                  const skip = new Set(['the','a','an','of','in','at','de','la','le','di','du','city','national','monument']);
+                  const city = d.location.split(',')[0].trim();
+                  // Take up to 2 meaningful words (skip articles/filler), max 12 chars total
+                  const words = city.split(' ').filter((w: string) => !skip.has(w.toLowerCase()) && w.length > 1);
+                  const label = words.slice(0, 2).join(' ').toUpperCase().slice(0, 12) || city.split(' ')[0].toUpperCase().slice(0, 8);
+                  return { id: d.id, lat: d.lat, lng: d.lng, color: d.geminiColor, label };
                 })}
                 discoveredLandmarks={discoveredLandmarks.map((d: any) => ({ id: d.id, location: d.location }))}
               />
@@ -755,11 +852,35 @@ export default function GameHUD() {
               </div>
             </div>
             {activeMeta && (
-              <div className="flex items-center gap-2 opacity-80">
-                <div style={{ color: activeMeta.color }}><activeMeta.Icon/></div>
-                <div className="text-right">
-                  <p className="text-xs font-bold">{activeTarget?.name}</p>
-                  <p className="text-[9px] font-mono" style={{ color: activeMeta.color, opacity: 0.7 }}>{activeMeta.label}</p>
+              <div className="flex items-center gap-3">
+                {/* Weather badge — always visible in flying state */}
+                {gameState === 'flying' && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg pointer-events-auto"
+                    style={{ background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(10px)' }}>
+                    {atmosphere ? (
+                      <>
+                        <span style={{ fontSize: 20, lineHeight: 1 }}>{atmosphere.weather.icon}</span>
+                        <div>
+                          <p className="text-[11px] font-semibold text-white leading-tight">{atmosphere.weather.tempC}°C &nbsp;{atmosphere.weather.condition}</p>
+                          <p className="text-[9px] font-mono leading-tight" style={{ color: atmosphere.timezone.isDaytime ? '#FFD700' : '#aaaaff' }}>
+                            {atmosphere.timezone.isDaytime ? '☀ DAY' : '🌙 NIGHT'} &nbsp;·&nbsp; {atmosphere.timezone.localTimeStr} LOCAL
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full border border-t-cyan-400 border-cyan-500/20 animate-spin"/>
+                        <p className="text-[9px] font-mono text-neutral-500">Scanning atmosphere...</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center gap-2 opacity-80">
+                  <div style={{ color: activeMeta.color }}><activeMeta.Icon/></div>
+                  <div className="text-right">
+                    <p className="text-xs font-bold">{activeTarget?.name}</p>
+                    <p className="text-[9px] font-mono" style={{ color: activeMeta.color, opacity: 0.7 }}>{activeMeta.label}</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -768,23 +889,47 @@ export default function GameHUD() {
           {/* Center states */}
           <div className={`absolute inset-0 flex flex-col items-center justify-center ${gameState === 'flying' ? '' : 'pointer-events-auto'}`}>
 
-            {/* FLYING */}
+            {/* FLYING - weather overlay + HUD */}
             {gameState === 'flying' && activeTarget && (
-              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 pointer-events-none">
-                <div className="flex flex-col items-center gap-2 px-8 py-5 rounded-2xl backdrop-blur-md"
-                  style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
-                    <p className="text-xs font-bold tracking-widest uppercase" style={{ color: activeMeta?.color }}>
-                      Deploying to {activeTarget.name}
+              <>
+                {/* Weather visual effect */}
+                <WeatherOverlay atmosphere={atmosphere} />
+
+                {/* Bottom HUD */}
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 pointer-events-none w-full max-w-lg px-4">
+                  <div className="flex flex-col items-center gap-3 px-6 py-4 rounded-2xl backdrop-blur-md"
+                    style={{ background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    {/* Location + weather row */}
+                    <div className="flex items-center justify-between w-full gap-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
+                        <p className="text-xs font-bold tracking-widest uppercase" style={{ color: activeMeta?.color }}>
+                          {activeTarget.name}
+                        </p>
+                      </div>
+                      {atmosphere && (
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm">{atmosphere.weather.icon}</span>
+                          <div className="text-right">
+                            <p className="text-[10px] font-mono text-neutral-300">{atmosphere.weather.condition} · {atmosphere.weather.tempC}°C</p>
+                            <p className="text-[9px] font-mono" style={{ color: atmosphere.timezone.isDaytime ? '#FFB800' : '#8888ff' }}>
+                              {atmosphere.timezone.isDaytime ? '☀ DAY' : '🌙 NIGHT'} · {atmosphere.timezone.localTimeStr} LOCAL
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {!atmosphere && (
+                        <p className="text-[9px] font-mono text-neutral-700 animate-pulse">Scanning atmosphere...</p>
+                      )}
+                    </div>
+                    {/* Controls hint */}
+                    <p className="text-[10px] text-neutral-600 text-center">
+                      <span className="font-mono bg-white/8 rounded px-1.5 py-0.5 text-neutral-400 text-[9px]">WASD</span>
+                      {' '}move &nbsp;·&nbsp; click ground to look &nbsp;·&nbsp; click <span className="text-red-400">red pin</span> to scan
                     </p>
                   </div>
-                  <p className="text-[11px] text-neutral-500 text-center">
-                    <span className="font-mono bg-white/8 rounded px-1.5 py-0.5 text-white text-[10px]">WASD</span>
-                    {' '}move &nbsp;·&nbsp; click ground to look &nbsp;·&nbsp; click <span className="text-red-400 font-semibold">red pin</span> to scan
-                  </p>
                 </div>
-              </div>
+              </>
             )}
 
             {/* LOADING / RESOLVING */}

@@ -16,6 +16,97 @@ interface MapLayerProps {
   pinColor?: string;
 }
 
+function buildScannerPin(hex: string): string {
+  const W = 160, H = 210;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  const cx = W / 2, cy = 66, R = 46;
+
+  ctx.shadowColor = hex;
+  ctx.shadowBlur = 18;
+
+  // Broken outer ring (4 arcs with corner gaps)
+  ctx.strokeStyle = hex;
+  ctx.lineWidth = 2.5;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, i * Math.PI / 2 + 0.28, (i + 1) * Math.PI / 2 - 0.28);
+    ctx.stroke();
+  }
+
+  // Tick marks at cardinal points (outside ring)
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (R + 6), cy + Math.sin(a) * (R + 6));
+    ctx.lineTo(cx + Math.cos(a) * (R + 16), cy + Math.sin(a) * (R + 16));
+    ctx.stroke();
+  }
+
+  // Faint inner ring
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, R * 0.5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Center diamond
+  ctx.fillStyle = hex;
+  ctx.shadowBlur = 28;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 11); ctx.lineTo(cx + 8, cy);
+  ctx.lineTo(cx, cy + 11); ctx.lineTo(cx - 8, cy);
+  ctx.closePath();
+  ctx.fill();
+
+  // Stem
+  ctx.shadowBlur = 10;
+  ctx.strokeStyle = hex;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + R + 3);
+  ctx.lineTo(cx, cy + R + 28);
+  ctx.stroke();
+
+  // Arrow tip (pointer)
+  ctx.fillStyle = hex;
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.moveTo(cx - 6, cy + R + 24);
+  ctx.lineTo(cx + 6, cy + R + 24);
+  ctx.lineTo(cx, cy + R + 38);
+  ctx.closePath();
+  ctx.fill();
+
+  // Text box background
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 0.72;
+  ctx.fillStyle = '#000d1a';
+  const ty = cy + R + 44, tw = 138, th = 28;
+  ctx.fillRect(cx - tw / 2, ty, tw, th);
+  ctx.globalAlpha = 0.7;
+  ctx.strokeStyle = hex;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx - tw / 2, ty, tw, th);
+
+  // Label text
+  ctx.shadowBlur = 12;
+  ctx.shadowColor = hex;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = hex;
+  ctx.font = 'bold 11px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('[ CLICK TO SCAN ]', cx, ty + th / 2);
+
+  return canvas.toDataURL();
+}
+
 export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
@@ -162,34 +253,20 @@ export default function MapLayer({ target, onMarkerClick, pinColor }: MapLayerPr
 
     viewer.entities.removeAll();
 
-    const pinBuilder = new window.Cesium.PinBuilder();
-    const color = pinColor
-      ? window.Cesium.Color.fromCssColorString(pinColor)
-      : window.Cesium.Color.CRIMSON;
-    const pinIcon = pinBuilder.fromColor(color, 56).toDataURL();
+    const hex = pinColor || '#00E5FF';
+    const pinIcon = buildScannerPin(hex);
 
     viewer.entities.add({
-      id: target.id, 
+      id: target.id,
       name: target.name,
       position: window.Cesium.Cartesian3.fromDegrees(target.lng, target.lat, target.height),
       billboard: {
         image: pinIcon,
         verticalOrigin: window.Cesium.VerticalOrigin.BOTTOM,
-        width: 56, // Bigger hitbox for clicking!
-        height: 56,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY 
+        width: 160,
+        height: 210,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
-      label: {
-        text: "CLICK TO SCAN",
-        font: 'bold 16pt sans-serif', // Bigger text!
-        fillColor: window.Cesium.Color.WHITE,
-        style: window.Cesium.LabelStyle.FILL_AND_OUTLINE,
-        outlineWidth: 4,
-        outlineColor: window.Cesium.Color.BLACK,
-        verticalOrigin: window.Cesium.VerticalOrigin.BOTTOM,
-        pixelOffset: new window.Cesium.Cartesian2(0, -65), 
-        disableDepthTestDistance: Number.POSITIVE_INFINITY
-      }
     });
 
     viewer.camera.flyTo({
