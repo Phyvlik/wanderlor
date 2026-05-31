@@ -1,11 +1,37 @@
 // app/api/encounter/route.ts
 import { NextResponse } from 'next/server';
 import snowflake from 'snowflake-sdk';
-import type { LandmarkEncounterRequest, LandmarkEncounterResponse } from '../../../types';
 import { getLandmarkOwner } from '../../utils/backboard';
-import { buildSnowflakePrompt, buildCustomPrompt } from '../../utils/prompts';
+import { buildSnowflakePrompt } from '../../utils/prompts';
+import { landmarkRegistry } from '../../data/landmarks';
 
-const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Promise<any> => {
+// --- NEW: Helper to get Live Environment Data ---
+async function getLiveEnvironment(lat: number, lng: number) {
+  try {
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+    const timestamp = Math.floor(Date.now() / 1000);
+    
+    // 1. Fetch exact Time Zone for the landmark
+    const timeRes = await fetch(`https://maps.googleapis.com/maps/api/timezone/json?location=${lat},${lng}&timestamp=${timestamp}&key=${apiKey}`);
+    const timeData = await timeRes.json();
+    
+    // Calculate local hour (0-23)
+    const localTimestamp = timestamp + (timeData.dstOffset || 0) + (timeData.rawOffset || 0);
+    const localDate = new Date(localTimestamp * 1000);
+    const localTime = localDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+
+    // 2. Mocking weather for now (Replace with your specific Weather API endpoint if needed)
+    const weather = "cloudy with a strange atmospheric pressure"; 
+
+    return { localTime, weather };
+  } catch (e) {
+    console.error("Environment fetch failed, using fallbacks.");
+    return { localTime: "Unknown Time", weather: "unstable" };
+  }
+}
+
+// --- UPDATED: Pass environment to Snowflake ---
+const generateEncounterWithSnowflake = (landmark: any, faction: string, environment: any): Promise<any> => {
   return new Promise((resolve, reject) => {
     const connection = snowflake.createConnection({
         account: process.env.SNOWFLAKE_ACCOUNT || '',
@@ -16,8 +42,10 @@ const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Pr
     connection.connect((err, conn) => {
       if (err) return reject(`Connection failed: ${err.message}`);
 
-      // Generate the dynamic prompt from our utils file
-      const systemPrompt = buildSnowflakePrompt(landmarkId, faction);
+      // Pass the live environment data into the prompt builder!
+      const systemPrompt = buildSnowflakePrompt(
+          landmark.name, faction, landmark.era, landmark.setting, landmark.figures, landmark.crisis, environment
+      );
       const safePrompt = systemPrompt.replace(/'/g, "''");
 
       const sqlText = `
@@ -25,7 +53,7 @@ const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Pr
             'llama3-8b', 
             [
                 {'role': 'system', 'content': '${safePrompt}'},
-                {'role': 'user', 'content': 'Generate the encounter.'}
+                {'role': 'user', 'content': 'Generate the lateral thinking puzzle.'}
             ],
             {'temperature': 0.7}
         ) as AI_RESPONSE;
@@ -39,18 +67,7 @@ const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Pr
           
           try {
             const cortexResponse = rows[0].AI_RESPONSE;
-            let rawString = "";
-            
-            if (typeof cortexResponse === 'string') {
-                rawString = cortexResponse;
-            } else if (cortexResponse?.choices?.[0]?.messages) {
-                rawString = cortexResponse.choices[0].messages;
-            } else if (cortexResponse?.choices?.[0]?.message?.content) {
-                rawString = cortexResponse.choices[0].message.content;
-            } else {
-                rawString = JSON.stringify(cortexResponse); 
-            }
-
+            let rawString = typeof cortexResponse === 'string' ? cortexResponse : JSON.stringify(cortexResponse);
             rawString = rawString.replace(/```json/gi, '').replace(/```/g, '').trim();
 
             const firstBrace = rawString.indexOf('{');
@@ -60,21 +77,18 @@ const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Pr
             }
 
             const aiData = JSON.parse(rawString);
-            
-            if (!aiData.title) aiData.title = "Anomaly Detected";
-            if (!aiData.storyDescription) aiData.storyDescription = "The timeline is unstable here.";
-            if (!aiData.choices || !Array.isArray(aiData.choices)) aiData.choices = ["Investigate", "Retreat"];
-            if (!aiData.factionOwner) aiData.factionOwner = "Unknown";
-            
-            resolve(aiData);
-          } catch (error) {
-            console.error("CRITICAL PARSE ERROR. Fallback triggered.");
+            const portraitUrl = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(aiData.characterName || 'Unknown')}`;
+
             resolve({
-                title: "Temporal Distortion",
-                storyDescription: "The AI communication link was briefly severed by a temporal storm, but you are still in danger. Unidentified entities are approaching your position.",
-                choices: ["Hold the line", "Fall back to a safer era"],
-                factionOwner: "Unknown"
+                characterName: aiData.characterName || "Unknown Entity",
+                characterPersona: aiData.characterPersona || "Glitching",
+                puzzleBeginning: aiData.puzzleBeginning || "The timeline is fractured.",
+                puzzleEnd: aiData.puzzleEnd || "You must repair it.",
+                secretTruth: aiData.secretTruth || "You need to guess the password.",
+                portraitUrl: portraitUrl
             });
+          } catch (error) {
+            reject(error);
           }
         }
       });
@@ -85,56 +99,21 @@ const generateEncounterWithSnowflake = (landmarkId: string, faction: string): Pr
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    console.log(`[Backend Ping]: Generating encounter for ${body.landmarkName}...`);
+    console.log(`[Backend Ping]: Generating puzzle for ${body.landmarkName}...`);
 
-    // If custom context is provided (Gemini-discovered landmarks), override the Snowflake prompt
-    if (body.customContext) {
-      const prompt = buildCustomPrompt(body.landmarkName, body.playerState.faction, body.customContext);
-      const safePrompt = prompt.replace(/'/g, "''");
-      const aiEncounterData = await new Promise<any>((resolve, reject) => {
-        const connection = require('snowflake-sdk').createConnection({
-          account: process.env.SNOWFLAKE_ACCOUNT || '',
-          username: process.env.SNOWFLAKE_USERNAME || '',
-          password: process.env.SNOWFLAKE_PASSWORD || '',
-        });
-        connection.connect((err: any) => {
-          if (err) return reject(err);
-          connection.execute({
-            sqlText: `SELECT SNOWFLAKE.CORTEX.COMPLETE('llama3-8b', [{'role':'system','content':'${safePrompt}'},{'role':'user','content':'Generate the encounter.'}], {'temperature':0.7}) as AI_RESPONSE;`,
-            complete: (err: any, _: any, rows: any) => {
-              if (err) return reject(err);
-              try {
-                const raw = rows[0].AI_RESPONSE;
-                const str = (typeof raw === 'string' ? raw : raw?.choices?.[0]?.messages || raw?.choices?.[0]?.message?.content || JSON.stringify(raw))
-                  .replace(/```json/gi,'').replace(/```/g,'').trim();
-                const first = str.indexOf('{'), last = str.lastIndexOf('}');
-                resolve(JSON.parse(first !== -1 ? str.substring(first, last+1) : str));
-              } catch { resolve({ title: 'Anomaly Detected', storyDescription: 'The fabric of history tears at this location.', choices: ['Investigate', 'Retreat'] }); }
-            }
-          });
-        });
-      });
-      return NextResponse.json({
-        title: aiEncounterData.title || 'Anomaly Detected',
-        storyDescription: aiEncounterData.storyDescription || '',
-        choices: aiEncounterData.choices || ['Investigate', 'Retreat'],
-        difficultyRating: Math.floor(Math.random() * 5) + 1,
-        factionOwner: await getLandmarkOwner(body.landmarkId),
-      }, { status: 200 });
-    }
+    const landmarkData = landmarkRegistry.find(l => l.id === body.landmarkId);
+    if (!landmarkData) throw new Error("Landmark not found in registry.");
 
-    const aiEncounterData = await generateEncounterWithSnowflake(body.landmarkId, body.playerState.faction);
+    // Fetch the live environment data using the landmark's coordinates!
+    const liveEnvironment = await getLiveEnvironment(landmarkData.lat, landmarkData.lng);
+
+    const aiEncounterData = await generateEncounterWithSnowflake(landmarkData, body.playerState?.faction || "Chronoguard", liveEnvironment);
     const liveFactionOwner = await getLandmarkOwner(body.landmarkId);
 
-    const responsePayload: LandmarkEncounterResponse = {
-      title: aiEncounterData.title,
-      storyDescription: aiEncounterData.storyDescription,
-      choices: aiEncounterData.choices,
-      difficultyRating: Math.floor(Math.random() * 5) + 1,
+    return NextResponse.json({
+      ...aiEncounterData,
       factionOwner: liveFactionOwner 
-    };
-
-    return NextResponse.json(responsePayload, { status: 200 });
+    }, { status: 200 });
 
   } catch (error) {
     console.error("[Backend Error]:", error);

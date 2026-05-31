@@ -1,52 +1,43 @@
-import { landmarkRegistry } from '../data/landmarks';
+// app/utils/prompts.ts
 
-export function buildCustomPrompt(name: string, playerFaction: string, ctx: { era: string; setting: string; crisis: string }): string {
-  return `You are the Game Master for WanderLore, a real-world RPG where players fight over history at real landmarks.
+export const buildSnowflakePrompt = (
+  landmarkId: string, 
+  faction: string, 
+  era: string, 
+  setting: string, 
+  figures: string[], 
+  crisis: string,
+  environmentContext: { localTime: string; weather: string } // NEW!
+): string => {
+  return `
+    You are the Master of the Timeline. The player, a ${faction} operative, has encountered a temporal anomaly at ${landmarkId}.
+    
+    Historical Context:
+    Era: ${era}
+    Setting: ${setting}
+    Key Figures Present: ${figures.join(", ")}
+    The Crisis: ${crisis}
 
-LOCATION: ${name}
-ERA: ${ctx.era}
-SCENE: ${ctx.setting}
-THE CRISIS: ${ctx.crisis}
-PLAYER: A ${playerFaction} operative who just materialized here with 60 seconds to act.
-
-Write a gripping RPG encounter rooted in the specific details above. Make it feel like the player is actually standing there.
-
-Respond ONLY with valid JSON, no markdown, no extra text:
-{
-  "title": "A punchy 4-6 word title referencing the specific location or era",
-  "storyDescription": "2-3 tight sentences. Name at least one real figure. Describe what the player sees, hears, smells. End on an urgent decision point.",
-  "choices": [
-    "A bold direct action specific to this scene (max 12 words)",
-    "A cunning indirect approach using the environment or a figure (max 12 words)"
-  ]
-}`;
-}
-
-export function buildSnowflakePrompt(landmarkId: string, playerFaction: string): string {
-  const landmark = landmarkRegistry.find(l => l.id === landmarkId);
-
-  if (!landmark) {
-    return `You are a Game Master for WanderLore RPG. A ${playerFaction} agent has arrived at an unknown anomaly site. Generate a short tense scenario. Respond ONLY with valid JSON, no markdown: {"title":"String","storyDescription":"String","choices":["String","String"]}`;
-  }
-
-  return `You are the Game Master for WanderLore, a real-world RPG where players fight over history at real landmarks.
-
-LOCATION: ${landmark.name}
-ERA: ${landmark.era}
-SCENE: ${landmark.setting}
-KEY FIGURES PRESENT: ${landmark.figures.join(' | ')}
-THE CRISIS: ${landmark.crisis}
-PLAYER: A ${playerFaction} operative who just materialized here with 60 seconds to act.
-
-Write a gripping RPG encounter rooted entirely in the specific details above. Use the real names, the real setting, and the real crisis. Do NOT use generic phrases like "temporal anomaly" or "timeline". Make it feel like the player is actually standing there.
-
-Respond ONLY with valid JSON, no markdown, no extra text:
-{
-  "title": "A punchy 4-6 word title referencing the specific location or era",
-  "storyDescription": "2-3 tight sentences. Name at least one real figure. Describe what the player sees, hears, smells. End on an urgent decision point.",
-  "choices": [
-    "A bold direct action specific to this scene (max 12 words)",
-    "A cunning indirect approach using the environment or a figure (max 12 words)"
-  ]
-}`;
-}
+    Current Real-World Sync:
+    The timeline is bleeding into the present. Acknowledge that the local time at the landmark is currently ${environmentContext.localTime} and the weather is ${environmentContext.weather}.
+    
+    Your task is to generate a "Lateral Thinking Puzzle" (also known as a "Black Story") based on this historical context. 
+    You must adopt the persona of one of the Key Figures mentioned above. You are speaking directly to the player.
+    
+    You must generate a story with a mysterious Beginning and a seemingly illogical End. The player must guess the 'Secret Truth' that connects them.
+    
+    RULES:
+    1. The 'Secret Truth' must be a logical, hidden twist related to the historical crisis.
+    2. Do NOT reveal the Secret Truth in the Beginning or End.
+    3. You must output ONLY valid JSON. No markdown, no preface.
+    
+    JSON SCHEMA:
+    {
+      "characterName": "Name of the historical figure speaking",
+      "characterPersona": "A brief description of their tone (e.g., 'A panicked engineer')",
+      "puzzleBeginning": "The strange situation the character presents to the player. Incorporate the current weather and time.",
+      "puzzleEnd": "The bizarre or illogical outcome.",
+      "secretTruth": "The hidden logical explanation connecting the Beginning and End that the player must guess."
+    }
+  `;
+};
