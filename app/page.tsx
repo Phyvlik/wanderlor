@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { gsap } from 'gsap';
 import type { LandmarkEncounterResponse } from '../types';
 import MapLayer from '../components/MapLayer';
+import WalletConnect from '../components/WalletConnect';
 import { landmarkRegistry, type Landmark } from './data/landmarks';
 import { searchLandmark, type GeminiLandmark } from '../lib/gemini';
 
@@ -388,18 +389,15 @@ export default function GameHUD() {
   const [chatLog, setChatLog] = useState<{role: 'ai'|'player', text: string}[]>([]);
   const [isChatting, setIsChatting] = useState(false);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [factionMap, setFactionMap]   = useState<Record<string,string>>(() => {
-    if (typeof window === 'undefined') return {};
-    try { return JSON.parse(localStorage.getItem('wl_factions') || '{}'); } catch { return {}; }
-  });
+  const [factionMap, setFactionMap]   = useState<Record<string,string>>({});
   const [atmosphere, setAtmosphere] = useState<{ weather: any; timezone: any } | null>(null);
+  const [walletAddress,      setWalletAddress]      = useState('');
+  const [nftMinting,         setNftMinting]         = useState<Set<string>>(new Set());
+  const [nftResults,         setNftResults]         = useState<Record<string, { mint: string; explorerUrl: string }>>({});
   const [searchQuery,        setSearchQuery]        = useState('');
   const [isSearching,        setIsSearching]        = useState(false);
   const [searchError,        setSearchError]        = useState('');
-  const [discoveredLandmarks, setDiscoveredLandmarks] = useState<DiscoveredLandmark[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try { return JSON.parse(localStorage.getItem('wl_discovered') || '[]'); } catch { return []; }
-  });
+  const [discoveredLandmarks, setDiscoveredLandmarks] = useState<DiscoveredLandmark[]>([]);
 
   const playerState = { playerId: 'demo_user_1', faction: 'Chronoguard', level: 5 };
 
@@ -407,6 +405,7 @@ export default function GameHUD() {
   const leftPanelRef   = useRef<HTMLDivElement>(null);
   const rightPanelRef  = useRef<HTMLDivElement>(null);
   const discoveredRef  = useRef<HTMLDivElement>(null);
+  const chatScrollRef  = useRef<HTMLDivElement>(null);
 
   /* Starfield */
   useEffect(() => {
@@ -459,8 +458,17 @@ export default function GameHUD() {
     syncToBackboard(discoveredLandmarks, factionMap);
   }, [factionMap]);
 
-  /* ── Load from Backboard on mount (fills gaps localStorage can't cover) ── */
+  /* ── Hydration-safe localStorage load + Backboard sync ── */
   useEffect(() => {
+    // Load local state first (runs only on client after hydration)
+    try {
+      const savedFactions = JSON.parse(localStorage.getItem('wl_factions') || '{}');
+      if (Object.keys(savedFactions).length > 0) setFactionMap(savedFactions);
+      const savedDiscovered = JSON.parse(localStorage.getItem('wl_discovered') || '[]');
+      if (savedDiscovered.length > 0) setDiscoveredLandmarks(savedDiscovered);
+    } catch {}
+
+    // Then pull from Backboard to fill any gaps
     const threadId = localStorage.getItem('wl_thread_id');
     if (!threadId) return;
     fetch(`/api/gamestate?threadId=${threadId}`)
@@ -477,6 +485,13 @@ export default function GameHUD() {
       })
       .catch(() => {});
   }, []);
+
+  /* Auto-scroll chat to bottom on new messages */
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: 'smooth' });
+    }
+  }, [chatLog]);
 
   /* GSAP entrance */
   useEffect(() => {
@@ -537,6 +552,23 @@ export default function GameHUD() {
       setEncounterData({ ...data, portraitUrl: humanFallback });
       setChatLog([{ role: 'ai', text: data.puzzleBeginning }]);
       setGameState('encounter');
+
+      // Speak the opening line via ElevenLabs
+      if (data.puzzleBeginning) {
+        fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: data.puzzleBeginning }),
+        }).then(r => r.ok ? r.blob() : null).then(blob => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          if (activeAudioRef.current) activeAudioRef.current.pause();
+          activeAudioRef.current = audio;
+          audio.play();
+          audio.onended = () => URL.revokeObjectURL(url);
+        }).catch(() => {});
+      }
 
       // Non-blocking: swap to real Wikipedia portrait when available
       if (data.characterName) {
@@ -676,6 +708,30 @@ export default function GameHUD() {
       setDiscoveredLandmarks(prev => [...prev, newLandmark]);
       setSearchQuery('');
 
+      // Mint NFT on Solana devnet if wallet connected (non-blocking)
+      if (walletAddress) {
+        setNftMinting(prev => new Set(prev).add(id));
+        fetch('/api/mint-nft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            walletAddress,
+            landmarkName: result.name,
+            era: result.era,
+            lat: result.lat,
+            lng: result.lng,
+          }),
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.mint) {
+              setNftResults(prev => ({ ...prev, [id]: { mint: data.mint, explorerUrl: data.explorerUrl } }));
+            }
+          })
+          .catch(() => {})
+          .finally(() => setNftMinting(prev => { const s = new Set(prev); s.delete(id); return s; }));
+      }
+
       // Animate new card in
       requestAnimationFrame(() => {
         if (discoveredRef.current) {
@@ -722,34 +778,43 @@ export default function GameHUD() {
         <div className="absolute inset-0 flex">
 
           {/* Left panel */}
-          <div ref={leftPanelRef} className="flex flex-col justify-between px-12 py-10 z-10" style={{ width: '42%' }}>
+          <div ref={leftPanelRef} className="flex flex-col z-10 h-full" style={{ width: '42%', padding: '20px 28px' }}>
 
-            {/* Branding */}
-            <div>
-              <p className="text-[9px] font-mono tracking-[0.35em] text-cyan-400/50 uppercase mb-4">
+            {/* ── Fixed header ── */}
+            <div className="shrink-0">
+              <p className="text-xs font-mono tracking-[0.35em] text-cyan-400/70 uppercase mb-2">
                 ◈ Chronoguard Ops · Lv {playerState.level}
               </p>
               <h1
-                className="leading-none font-black uppercase mb-2"
+                className="leading-none font-black uppercase mb-1"
                 style={{
                   fontFamily: 'var(--font-cinzel)',
-                  fontSize: 'clamp(52px, 6vw, 80px)',
+                  fontSize: 'clamp(48px, 5.5vw, 80px)',
                   textShadow: '0 0 80px rgba(0,229,255,0.3), 0 0 160px rgba(0,229,255,0.1)',
                   WebkitTextStroke: '1px rgba(0,229,255,0.1)',
                 }}
               >
                 Wander<br/><span style={{ color: '#00E5FF' }}>Lore</span>
               </h1>
-              <p className="text-[10px] font-mono text-neutral-600 tracking-[0.4em] uppercase mt-3 mb-10">
+              <p className="text-xs font-mono text-neutral-400 tracking-[0.3em] uppercase mt-1 mb-3">
                 Rewrite History · One Landmark at a Time
               </p>
+              <div className="mb-3">
+                <WalletConnect onConnect={setWalletAddress} onDisconnect={() => setWalletAddress('')} />
+                {walletAddress && (
+                  <p className="text-xs font-mono text-neutral-500 mt-1">
+                    ◎ Discoveries mint as NFTs on Solana Devnet
+                  </p>
+                )}
+              </div>
+              <div className="h-px mb-3" style={{ background: 'linear-gradient(to right, rgba(0,229,255,0.4), transparent)' }}/>
+            </div>
 
-              {/* Divider */}
-              <div className="h-px mb-8" style={{ background: 'linear-gradient(to right, rgba(0,229,255,0.3), transparent)' }}/>
+            {/* ── Scrollable content ── */}
+            <div className="flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,229,255,0.15) transparent' }}>
 
-              {/* Mission list */}
               {/* ── Search bar ── */}
-              <form onSubmit={handleSearch} className="flex gap-2 mb-5">
+              <form onSubmit={handleSearch} className="flex gap-2 mb-3">
                 <div className="flex-1 relative">
                   <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-600 pointer-events-none" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
                   <input
@@ -757,8 +822,8 @@ export default function GameHUD() {
                     value={searchQuery}
                     onChange={e => { setSearchQuery(e.target.value); setSearchError(''); }}
                     placeholder="Search any landmark in the world..."
-                    className="w-full text-sm text-white placeholder-neutral-700 pl-8 pr-3 py-2.5 rounded-xl focus:outline-none transition-colors"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)' }}
+                    className="w-full text-sm text-white placeholder-neutral-500 pl-8 pr-3 py-2.5 rounded-xl focus:outline-none transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.15)' }}
                     onFocus={e => (e.currentTarget.style.borderColor = 'rgba(0,229,255,0.35)')}
                     onBlur={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.09)')}
                   />
@@ -776,12 +841,12 @@ export default function GameHUD() {
                   ) : 'SCAN'}
                 </button>
               </form>
-              {searchError && <p className="text-red-400 text-[10px] font-mono mb-3 -mt-2 pl-1">{searchError}</p>}
-              <div className="flex items-center gap-2 mb-3">
-                <p className="text-[9px] font-mono text-neutral-700 tracking-[0.3em] uppercase">Select Mission</p>
+              {searchError && <p className="text-red-400 text-xs font-mono mb-3 -mt-2 pl-1">{searchError}</p>}
+              <div className="flex items-center gap-2 mb-2">
+                <p className="text-xs font-mono text-neutral-400 tracking-[0.3em] uppercase">Select Mission</p>
                 <div className="flex items-center gap-1 ml-auto">
-                  <div className="w-1 h-1 rounded-full bg-cyan-500/50"/>
-                  <span className="text-[8px] font-mono text-neutral-700 tracking-wider">POWERED BY GEMINI</span>
+                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-500/70"/>
+                  <span className="text-[10px] font-mono text-neutral-500 tracking-wider">POWERED BY GEMINI</span>
                 </div>
               </div>
               <div className="flex flex-col gap-1">
@@ -794,7 +859,7 @@ export default function GameHUD() {
                     <button
                       key={m.id}
                       onClick={() => handleSelectMission(m)}
-                      className="mission-row group flex items-center gap-4 py-4 px-4 rounded-xl transition-all duration-200 text-left"
+                      className="mission-row group flex items-center gap-4 py-2.5 px-4 rounded-xl transition-all duration-200 text-left"
                       style={{ border: '1px solid transparent' }}
                       onMouseEnter={e => {
                         e.currentTarget.style.background = `rgba(${t.color === '#FFB800' ? '255,184,0' : t.color === '#00E5FF' ? '0,229,255' : '255,64,64'},0.05)`;
@@ -806,7 +871,7 @@ export default function GameHUD() {
                       }}
                     >
                       {/* Number */}
-                      <span className="text-[11px] font-mono text-neutral-500 w-5 shrink-0">0{i+1}</span>
+                      <span className="text-xs font-mono text-neutral-400 w-5 shrink-0">0{i+1}</span>
 
                       {/* Icon */}
                       <div style={{ color: t.color }} className="shrink-0 opacity-70 group-hover:opacity-100 transition-opacity">
@@ -815,8 +880,8 @@ export default function GameHUD() {
 
                       {/* Text */}
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-base text-neutral-200 group-hover:text-white transition-colors tracking-wide truncate">{m.name}</p>
-                        <p className="text-[10px] font-mono mt-0.5" style={{ color: t.color, opacity: 0.65 }}>{t.label}</p>
+                        <p className="font-bold text-base text-white group-hover:text-white transition-colors tracking-wide truncate">{m.name}</p>
+                        <p className="text-xs font-mono mt-0.5" style={{ color: t.color, opacity: 0.85 }}>{t.label}</p>
                       </div>
 
                       {/* Status */}
@@ -828,7 +893,7 @@ export default function GameHUD() {
                             {mine ? '▲ HELD' : '▼ ENEMY'}
                           </span>
                         ) : (
-                          <span className="text-[9px] font-mono text-neutral-500 group-hover:text-neutral-200 transition-colors tracking-wider">DEPLOY →</span>
+                          <span className="text-xs font-mono text-neutral-400 group-hover:text-neutral-200 transition-colors tracking-wider">DEPLOY →</span>
                         )}
                         <div className="flex gap-0.5 justify-end mt-1.5">
                           {[1,2,3,4,5].map(d => (
@@ -840,12 +905,11 @@ export default function GameHUD() {
                   );
                 })}
               </div>
-            </div>
 
             {/* ── Discovered landmarks ── */}
             {discoveredLandmarks.length > 0 && (
-              <div ref={discoveredRef} className="flex flex-col gap-1 mb-4">
-                <p className="text-[9px] font-mono text-neutral-700 tracking-[0.3em] uppercase mb-2 flex items-center gap-2">
+              <div ref={discoveredRef} className="flex flex-col gap-1 mt-3 mb-2">
+                <p className="text-xs font-mono text-neutral-400 tracking-[0.3em] uppercase mb-2 flex items-center gap-2">
                   <span>Discovered</span>
                   <span className="px-1.5 py-0.5 rounded text-[8px]" style={{ background: 'rgba(0,229,255,0.08)', color: '#00E5FF', border: '1px solid rgba(0,229,255,0.2)' }}>
                     {discoveredLandmarks.length} NEW
@@ -871,6 +935,21 @@ export default function GameHUD() {
                             <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0" style={{ color: t.accent, background: t.glow, border: `1px solid ${t.border}` }}>
                               GEMINI
                             </span>
+                            {nftMinting.has(m.id) && (
+                              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1" style={{ color: '#9945FF', background: 'rgba(153,69,255,0.08)', border: '1px solid rgba(153,69,255,0.3)' }}>
+                                <span className="w-2 h-2 rounded-full border border-t-purple-400 border-purple-500/20 animate-spin inline-block"/>
+                                MINTING
+                              </span>
+                            )}
+                            {nftResults[m.id] && (
+                              <a href={nftResults[m.id].explorerUrl} target="_blank" rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1 hover:opacity-80 transition-opacity"
+                                style={{ color: '#9945FF', background: 'rgba(153,69,255,0.1)', border: '1px solid rgba(153,69,255,0.4)' }}
+                                title={`NFT Mint: ${nftResults[m.id].mint}`}>
+                                ◎ ON-CHAIN
+                              </a>
+                            )}
                             {captured && (
                               <span className="text-[8px] font-mono px-1.5 py-0.5 rounded shrink-0" style={mine
                                 ? { color: '#00E5FF', background: 'rgba(0,229,255,0.08)', border: '1px solid rgba(0,229,255,0.3)' }
@@ -879,8 +958,8 @@ export default function GameHUD() {
                               </span>
                             )}
                           </div>
-                          <p className="text-[10px] font-mono mb-0.5" style={{ color: t.accent, opacity: 0.65 }}>{m.era}</p>
-                          <p className="text-[9px] text-neutral-700 truncate">{(m as DiscoveredLandmark).location}</p>
+                          <p className="text-xs font-mono mb-0.5" style={{ color: t.accent, opacity: 0.85 }}>{m.era}</p>
+                          <p className="text-xs text-neutral-400 truncate">{(m as DiscoveredLandmark).location}</p>
                         </div>
                         <div className="flex flex-col items-end gap-1.5 shrink-0">
                           <div className="flex gap-0.5">
@@ -888,7 +967,7 @@ export default function GameHUD() {
                               <div key={d} className="w-1 h-1 rounded-full" style={{ background: d <= m.baseDifficulty ? t.accent : 'rgba(255,255,255,0.08)' }}/>
                             ))}
                           </div>
-                          <span className="text-[9px] font-mono text-neutral-600 tracking-wider">DEPLOY →</span>
+                          <span className="text-xs font-mono text-neutral-400 tracking-wider">DEPLOY →</span>
                         </div>
                       </div>
                     </button>
@@ -896,9 +975,10 @@ export default function GameHUD() {
                 })}
               </div>
             )}
+            </div>{/* end scrollable */}
 
-            {/* Footer */}
-            <div className="flex items-center gap-3 opacity-30">
+            {/* ── Footer ── */}
+            <div className="shrink-0 flex items-center gap-3 opacity-30 pt-3">
               <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" style={{ animation: 'flicker 2s ease-in-out infinite' }}/>
               <p className="text-[9px] font-mono tracking-widest uppercase">WanderLore · Temporal Ops v1.0</p>
             </div>
@@ -944,7 +1024,7 @@ export default function GameHUD() {
         <div className="absolute inset-0 pointer-events-none">
 
           {/* Top bar */}
-          <header className="pointer-events-auto flex justify-between items-center px-7 pt-5">
+          <header className="pointer-events-auto flex justify-between items-center px-7 pt-5 gap-4">
             <div className="flex items-center gap-3">
               <div className="w-7 h-7 rounded border border-cyan-500/30 bg-cyan-500/8 flex items-center justify-center">
                 <div className="w-2 h-2 rounded-full bg-cyan-400" style={{ animation: 'flicker 2.4s ease-in-out infinite' }}/>
@@ -954,6 +1034,8 @@ export default function GameHUD() {
                 <p className="text-sm font-semibold">{playerState.faction} · Lv {playerState.level}</p>
               </div>
             </div>
+            <div className="flex items-center gap-3 ml-auto">
+              <WalletConnect onConnect={setWalletAddress} onDisconnect={() => setWalletAddress('')} />
             {activeMeta && (
               <div className="flex items-center gap-3">
                 {/* Weather badge — always visible in flying state */}
@@ -987,6 +1069,7 @@ export default function GameHUD() {
                 </div>
               </div>
             )}
+            </div>
           </header>
 
           {/* Center states */}
@@ -1049,72 +1132,138 @@ export default function GameHUD() {
               </div>
             )}
 
-            {/* ENCOUNTER (Visual Novel Layout) */}
+            {/* ENCOUNTER — Cinematic visual novel layout */}
             {gameState === 'encounter' && encounterData && (
-              <div className="absolute inset-x-0 bottom-0 p-8 flex justify-center pointer-events-auto">
-                <div className="w-full max-w-5xl flex items-end gap-6">
-                  
-                  {/* Character Portrait */}
-                  <div className="w-56 h-56 shrink-0 relative drop-shadow-2xl transform translate-y-2">
-                    <img 
-                      src={encounterData.portraitUrl} 
-                      alt={encounterData.characterName} 
-                      className="w-full h-full object-contain drop-shadow-[0_0_20px_rgba(0,229,255,0.4)]" 
+              <div className="absolute inset-x-0 bottom-0 pointer-events-auto" style={{ padding: '0 28px 28px 28px', background: 'linear-gradient(to top, rgba(0,0,8,0.88) 0%, transparent 100%)' }}>
+                <style>{`
+                  @keyframes scan-sweep {
+                    0%   { top: 4%;  opacity: 0; }
+                    8%   { opacity: 0.9; }
+                    92%  { opacity: 0.9; }
+                    100% { top: 88%; opacity: 0; }
+                  }
+                  @keyframes bracket-pulse {
+                    0%, 100% { opacity: 0.45; }
+                    50%      { opacity: 1; }
+                  }
+                `}</style>
+
+                <div className="w-full max-w-5xl mx-auto flex items-end gap-5">
+
+                  {/* ── Character Portrait ── */}
+                  <div className="shrink-0 relative rounded-xl overflow-hidden" style={{ width: 224, height: 330 }}>
+                    {/* Backdrop glow */}
+                    <div className="absolute inset-0" style={{ background: 'rgba(0,229,255,0.03)', boxShadow: '0 0 50px -10px rgba(0,229,255,0.35)' }}/>
+
+                    {/* Portrait image */}
+                    <img
+                      src={encounterData.portraitUrl}
+                      alt={encounterData.characterName}
+                      className="absolute inset-0 w-full h-full object-contain"
+                      style={{ filter: 'drop-shadow(0 0 22px rgba(0,229,255,0.45))' }}
                     />
+
+                    {/* Animated scan line */}
+                    <div className="absolute inset-x-0 h-px pointer-events-none" style={{
+                      background: 'linear-gradient(to right, transparent 0%, rgba(0,229,255,0.85) 50%, transparent 100%)',
+                      boxShadow: '0 0 10px rgba(0,229,255,0.7)',
+                      animationName: 'scan-sweep',
+                      animationDuration: '3.2s',
+                      animationTimingFunction: 'ease-in-out',
+                      animationIterationCount: 'infinite',
+                    }}/>
+
+                    {/* Corner brackets */}
+                    <div className="absolute top-0 left-0 w-5 h-5 pointer-events-none" style={{ borderTop: '2px solid #00E5FF', borderLeft: '2px solid #00E5FF', animation: 'bracket-pulse 2s ease-in-out infinite' }}/>
+                    <div className="absolute top-0 right-0 w-5 h-5 pointer-events-none" style={{ borderTop: '2px solid #00E5FF', borderRight: '2px solid #00E5FF', animation: 'bracket-pulse 2s ease-in-out infinite', animationDelay: '0.5s' }}/>
+                    <div className="absolute bottom-0 left-0 w-5 h-5 pointer-events-none" style={{ borderBottom: '2px solid #00E5FF', borderLeft: '2px solid #00E5FF', animation: 'bracket-pulse 2s ease-in-out infinite', animationDelay: '1s' }}/>
+                    <div className="absolute bottom-0 right-0 w-5 h-5 pointer-events-none" style={{ borderBottom: '2px solid #00E5FF', borderRight: '2px solid #00E5FF', animation: 'bracket-pulse 2s ease-in-out infinite', animationDelay: '1.5s' }}/>
+
+                    {/* Bottom nameplate */}
+                    <div className="absolute bottom-0 inset-x-0 px-3 py-2" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.97) 0%, rgba(0,0,0,0.6) 65%, transparent 100%)' }}>
+                      <p className="text-[8px] font-mono tracking-[0.35em] uppercase mb-0.5" style={{ color: 'rgba(0,229,255,0.55)' }}>◈ ENTITY SCANNED</p>
+                      <p className="text-xs font-bold text-white tracking-wide leading-tight truncate">{encounterData.characterName}</p>
+                    </div>
                   </div>
 
-                  {/* Dialogue & Input Box */}
-                  <div className="flex-1 rounded-2xl p-6 backdrop-blur-xl mb-4 flex flex-col"
-                       style={{ background:'rgba(3,3,7,0.90)', border:'1px solid rgba(0,229,255,0.3)', boxShadow:'0 0 80px -20px rgba(0,229,255,0.2), inset 0 1px 0 rgba(255,255,255,0.04)', height: '320px' }}>
-                    
+                  {/* ── Dialogue Panel ── */}
+                  <div className="flex-1 relative rounded-2xl backdrop-blur-xl flex flex-col overflow-hidden"
+                       style={{ background: 'rgba(1,3,12,0.93)', border: '1px solid rgba(0,229,255,0.28)', boxShadow: '0 0 90px -20px rgba(0,229,255,0.22), inset 0 1px 0 rgba(255,255,255,0.04)', height: 330, padding: '18px 20px 16px 20px' }}>
+
+                    {/* Sci-fi corner accents on panel */}
+                    <div className="absolute top-0 left-0 w-6 h-6 pointer-events-none" style={{ borderTop: '2px solid rgba(0,229,255,0.55)', borderLeft: '2px solid rgba(0,229,255,0.55)' }}/>
+                    <div className="absolute top-0 right-0 w-6 h-6 pointer-events-none" style={{ borderTop: '2px solid rgba(0,229,255,0.55)', borderRight: '2px solid rgba(0,229,255,0.55)' }}/>
+                    <div className="absolute bottom-0 left-0 w-6 h-6 pointer-events-none" style={{ borderBottom: '2px solid rgba(0,229,255,0.3)', borderLeft: '2px solid rgba(0,229,255,0.3)' }}/>
+                    <div className="absolute bottom-0 right-0 w-6 h-6 pointer-events-none" style={{ borderBottom: '2px solid rgba(0,229,255,0.3)', borderRight: '2px solid rgba(0,229,255,0.3)' }}/>
+
                     {/* Header */}
-                    <div className="flex items-end gap-3 mb-2 shrink-0">
-                      <span className="text-2xl font-black uppercase text-cyan-400 tracking-wider" style={{ fontFamily:'var(--font-cinzel)', textShadow:'0 0 20px rgba(0,229,255,0.5)' }}>
-                        {encounterData.characterName}
-                      </span>
-                      <span className="text-xs font-mono text-cyan-100 uppercase tracking-widest opacity-60 mb-1">
-                        [{encounterData.characterPersona}]
-                      </span>
-                    </div>
-                    
-                    <div className="h-px w-full bg-gradient-to-r from-cyan-500/40 to-transparent mb-4 shrink-0"/>
-                    
-                    {/* Scrolling Chat Log */}
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 mb-4 custom-scrollbar">
-                      {chatLog.map((msg, idx) => (
-                        <div key={idx} className={`p-3 rounded-xl ${msg.role === 'ai' ? 'bg-cyan-900/20 border border-cyan-500/20 mr-8' : 'bg-white/5 border border-white/10 ml-8'}`}>
-                          <p className={`text-sm leading-relaxed ${msg.role === 'ai' ? 'text-neutral-200' : 'text-neutral-400'}`}>
-                            {msg.role === 'ai' && <span className="font-bold text-cyan-400 mr-2">{encounterData.characterName}:</span>}
-                            {msg.role === 'player' && <span className="font-bold text-white opacity-50 mr-2">You:</span>}
-                            "{msg.text}"
-                          </p>
+                    <div className="flex items-start justify-between mb-2 shrink-0">
+                      <div>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
+                          <span className="text-[8px] font-mono tracking-[0.35em] uppercase" style={{ color: 'rgba(255,255,255,0.3)' }}>Temporal Contact · Live</span>
                         </div>
-                      ))}
-                      {isChatting && <p className="text-xs font-mono text-cyan-500/50 animate-pulse">Incoming transmission...</p>}
+                        <span className="text-xl font-black uppercase tracking-wider" style={{ fontFamily: 'var(--font-cinzel)', color: '#00E5FF', textShadow: '0 0 28px rgba(0,229,255,0.65)' }}>
+                          {encounterData.characterName}
+                        </span>
+                      </div>
+                      <span className="text-[9px] font-mono px-2.5 py-1 rounded-full mt-1 shrink-0 uppercase tracking-widest" style={{ color: 'rgba(0,229,255,0.75)', background: 'rgba(0,229,255,0.07)', border: '1px solid rgba(0,229,255,0.22)' }}>
+                        {encounterData.characterPersona}
+                      </span>
                     </div>
 
-                    {/* Chat Input & Claim Button */}
-                    <div className="flex gap-3 shrink-0">
-                      <form onSubmit={handleChatSubmit} className="flex-1 flex gap-2">
+                    {/* Divider */}
+                    <div className="h-px w-full mb-3 shrink-0" style={{ background: 'linear-gradient(to right, rgba(0,229,255,0.55), rgba(0,229,255,0.08), transparent)' }}/>
+
+                    {/* Chat log */}
+                    <div ref={chatScrollRef} className="flex-1 overflow-y-auto space-y-2 mb-3 pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(0,229,255,0.15) transparent' }}>
+                      {chatLog.map((msg, idx) => (
+                        <div key={idx} className={`flex ${msg.role === 'player' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[82%] px-3 py-2 text-sm leading-relaxed ${msg.role === 'ai' ? 'rounded-xl rounded-tl-sm' : 'rounded-xl rounded-tr-sm'}`}
+                               style={msg.role === 'ai'
+                                 ? { background: 'rgba(0,229,255,0.07)', border: '1px solid rgba(0,229,255,0.18)', color: '#e0e0e0' }
+                                 : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#999' }
+                               }>
+                            {msg.role === 'ai' && <span className="text-[10px] font-bold block mb-0.5" style={{ color: '#00E5FF' }}>{encounterData.characterName}</span>}
+                            {msg.role === 'player' && <span className="text-[10px] font-bold text-neutral-500 block mb-0.5">You</span>}
+                            {msg.text}
+                          </div>
+                        </div>
+                      ))}
+                      {isChatting && (
+                        <div className="flex justify-start">
+                          <div className="flex items-center gap-1 px-4 py-2.5 rounded-xl rounded-tl-sm" style={{ background: 'rgba(0,229,255,0.07)', border: '1px solid rgba(0,229,255,0.15)' }}>
+                            {[0,1,2].map(i => (
+                              <div key={i} className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'rgba(0,229,255,0.6)', animationDelay: `${i * 0.18}s` }}/>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Input + Claim */}
+                    <div className="flex gap-2 shrink-0">
+                      <form onSubmit={handleChatSubmit} className="flex-1">
                         <input
                           type="text"
                           value={playerGuess}
                           onChange={e => setPlayerGuess(e.target.value)}
                           disabled={isChatting}
-                          placeholder="Type to chat and press Enter..."
-                          className="flex-1 bg-black/60 border border-neutral-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cyan-400 transition-colors disabled:opacity-50"
+                          placeholder="Respond to the temporal entity…"
+                          className="w-full rounded-xl px-4 py-2.5 text-sm text-white placeholder-neutral-700 focus:outline-none transition-all disabled:opacity-40"
+                          style={{ background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(0,229,255,0.18)' }}
+                          onFocus={e => (e.currentTarget.style.borderColor = 'rgba(0,229,255,0.6)')}
+                          onBlur={e => (e.currentTarget.style.borderColor = 'rgba(0,229,255,0.18)')}
                         />
-                        {/* Hidden submit button so Enter works properly */}
-                        <button type="submit" className="hidden" />
                       </form>
-                      
-                      {/* The Auto-Win / Claim Button */}
                       <button
                         onClick={handleSubmitGuess}
-                        className="px-6 py-3 rounded-xl text-xs font-bold tracking-widest uppercase transition-all hover:scale-105 active:scale-95 shrink-0"
-                        style={{ background:'rgba(0,229,255,0.15)', border:'1px solid #00E5FF', color:'#00E5FF', boxShadow: '0 0 20px rgba(0,229,255,0.4)' }}
+                        className="px-5 py-2.5 rounded-xl text-xs font-bold tracking-widest uppercase transition-all hover:scale-105 active:scale-95 shrink-0"
+                        style={{ background: 'rgba(0,229,255,0.11)', border: '1px solid #00E5FF', color: '#00E5FF', boxShadow: '0 0 28px rgba(0,229,255,0.4), inset 0 1px 0 rgba(0,229,255,0.08)', textShadow: '0 0 10px rgba(0,229,255,0.5)' }}
+                        onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 0 40px rgba(0,229,255,0.65), inset 0 1px 0 rgba(0,229,255,0.12)')}
+                        onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 0 28px rgba(0,229,255,0.4), inset 0 1px 0 rgba(0,229,255,0.08)')}
                       >
-                        Claim Territory
+                        ◈ Claim
                       </button>
                     </div>
                   </div>
