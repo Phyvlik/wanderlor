@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     if (imageBuffer) {
       console.log('[mint-nft] Uploading image to Arweave...');
       const [uploadedImageUri] = await umi.uploader.upload([
-        { buffer: imageBuffer, fileName: 'landmark.jpg', displayName: landmarkName, contentType: 'image/jpeg', uniqueName: `${landmarkName}-${Date.now()}`, tags: [] },
+        { buffer: imageBuffer, fileName: 'landmark.jpg', displayName: landmarkName, contentType: 'image/jpeg', uniqueName: `${landmarkName}-${Date.now()}`, tags: [], extension: 'jpg' },
       ]);
       imageUri = uploadedImageUri;
       console.log('[mint-nft] Image uploaded:', imageUri);
